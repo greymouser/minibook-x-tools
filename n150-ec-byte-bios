@@ -1,0 +1,281 @@
+#!/usr/bin/env bash
+#
+# n150-ec-byte-bios — Read/write a single EC (Embedded Controller) byte via debugfs
+#
+# DESCRIPTION
+#   For the N150 platform, this script reads or writes a byte in the EC I/O map,
+#   specifically targeting the BIOS options byte by default at offset 0xF0 (240).
+#   It uses traditional CLI options. Writing to the EC is inherently risky.
+#
+#   IMPORTANT: Must be run as root. This script does NOT invoke sudo.
+#
+# START-UP CHECKS (automatic)
+#   1) Ensures we are root.
+#   2) Runs: `modinfo --filename ec_sys`
+#        - On error: abort with guidance to enable CONFIG_ACPI_EC_DEBUGFS.
+#        - On success: checks /sys/module/ec_sys/parameters/write_support
+#            - If 'Y': continue.
+#            - If 'N':
+#                • If ec_sys is (builtin): abort with guidance to boot with
+#                  ec_sys.write_support=y or compile ec_sys as a module.
+#                • Otherwise (module): temporarily reload ec_sys with
+#                  write_support=y and restore on exit.
+#
+# DEFAULTS
+#   EC file : /sys/kernel/debug/ec/ec0/io
+#   offset  : 0xF0  (decimal 240)
+#   target  : 0xAA
+#
+# USAGE
+#   n150-ec-byte-bios -h
+#   n150-ec-byte-bios -m                           # show EC map
+#   n150-ec-byte-bios -r [-o 0xF0]                 # read byte at offset
+#   n150-ec-byte-bios -w -t 0xAA [-o 0xF0] -i      # write byte at offset (requires -i unless --dry-run)
+#   n150-ec-byte-bios -f /path/to/ec/io ...        # alternate EC file
+#   n150-ec-byte-bios -n -w ...                    # dry-run (no write, skips risk countdown)
+#   n150-ec-byte-bios -V ...                       # verbose
+#
+# OPTIONS
+#   -h, --help            Show help and exit
+#   -m, --map             Print EC map (od -A x -t x1z -v)
+#   -r, --read            Read and print the byte at --offset
+#   -w, --write           Write --target byte at --offset
+#   -o, --offset VAL      Byte offset (decimal or 0xHEX). Default: 0xF0
+#   -t, --target BYTE     Target byte to write (hex 1 byte: AA or 0xAA). Default: 0xAA
+#   -f, --file PATH       EC file path (default: /sys/kernel/debug/ec/ec0/io)
+#   -n, --dry-run         Do not actually write; show what would happen
+#   -i, --i-understand-this-could-destroy-my-ec
+#                         Required for actual writes; otherwise a warning and 5s countdown runs
+#   -V, --verbose         Verbose logging
+#
+# EXIT CODES
+#   0 on success; non-zero on errors
+#
+set -Eeuo pipefail
+
+# ---- Defaults ----
+ECFILE_DEFAULT="/sys/kernel/debug/ec/ec0/io"
+OFFSET_DEFAULT="0xF0"     # hex F0 == dec 240
+TARGET_DEFAULT="0xAA"
+
+ECFILE="$ECFILE_DEFAULT"
+OFFSET="$OFFSET_DEFAULT"
+TARGET="$TARGET_DEFAULT"
+DO_MAP=false
+DO_READ=false
+DO_WRITE=false
+DRY_RUN=false
+VERBOSE=false
+ACK_RISK=false
+
+# Track whether we temporarily reloaded ec_sys with write_support=y
+RESTORE_EC_SYS=false
+
+# ---- Helpers ----
+log() { $VERBOSE && echo "[*] $*" >&2 || true; }
+err() { echo "[!] $*" >&2; exit 1; }
+
+print_help() {
+cat <<'EOF'
+Usage: n150-ec-byte-bios [options]
+
+  -h, --help            Show help and exit
+  -m, --map             Print EC map (od -A x -t x1z -v)
+  -r, --read            Read and print the byte at --offset
+  -w, --write           Write --target byte at --offset
+  -o, --offset VAL      Byte offset (decimal or 0xHEX). Default: 0xF0
+  -t, --target BYTE     Target byte (hex 1 byte: AA or 0xAA). Default: 0xAA
+  -f, --file PATH       EC file path (default: /sys/kernel/debug/ec/ec0/io)
+  -n, --dry-run         Do not actually write; show what would happen
+  -i, --i-understand-this-could-destroy-my-ec
+                        Required to perform real writes; otherwise a warning with 5s countdown will run
+  -V, --verbose         Verbose logging
+
+Examples:
+  n150-ec-byte-bios -m
+  n150-ec-byte-bios -r -o 0xF0
+  n150-ec-byte-bios -w -o 240 -t 0xAA -i
+  n150-ec-byte-bios -n -w -o 0xF0 -t AA
+EOF
+}
+
+to_decimal_offset() {
+  local v="$1"
+  if [[ "$v" =~ ^0x[0-9A-Fa-f]+$ ]]; then
+    printf '%d' "$((16#${v:2}))"
+  elif [[ "$v" =~ ^[0-9]+$ ]]; then
+    printf '%d' "$v"
+  else
+    err "Invalid offset: $v (use decimal or 0xHEX)"
+  fi
+}
+
+is_hex_byte() {
+  # Accepts AA, aa, or 0xAA (1–2 hex digits allowed)
+  local v="$1"
+  v="${v#0x}"; v="${v#0X}"
+  [[ "$v" =~ ^[0-9A-Fa-f]{1,2}$ ]]
+}
+
+normalize_hex_byte() {
+  # Normalize to exactly two uppercase hex digits, zero-padded if needed
+  local v="$1"
+  v="${v#0x}"; v="${v#0X}"
+  v="${v^^}"
+  # Convert hex → int, then format as two hex digits
+  local n=$((16#${v}))
+  printf "%02X" "${n}"
+}
+
+read_byte() {
+  local file="$1" dec_off="$2"
+  dd if="$file" bs=1 skip="$dec_off" count=1 status=none \
+    | hexdump -e '1/1 "%02X"'
+}
+
+write_byte() {
+  local file="$1" dec_off="$2" hex_byte="$3"
+  # Use %b so printf interprets the \xHH sequence from the variable,
+  # and ensure hex_byte is exactly 2 hex digits
+  printf "%b" "\\x${hex_byte}" | dd of="$file" bs=1 seek="$dec_off" count=1 conv=notrunc status=none
+}
+
+show_map() {
+  echo "EC map:"
+  echo "======="
+  od -A x -t x1z -v "$ECFILE"
+  echo
+}
+
+warn_countdown() {
+  echo "DANGER: Writing to the Embedded Controller can permanently brick your device."
+  echo "If you do not accept this risk, press Ctrl-C NOW to abort."
+  for n in 5 4 3 2 1; do
+    echo -n "${n}... "
+    sleep 1
+  done
+  echo
+}
+
+cleanup() {
+  # Restore ec_sys to its previous state if we changed it
+  if $RESTORE_EC_SYS; then
+    log "Restoring ec_sys to its prior state (write_support=N/default)..."
+    if modprobe -r ec_sys 2>/dev/null; then
+      modprobe ec_sys 2>/dev/null || true
+    fi
+  fi
+}
+trap cleanup EXIT
+
+# ---- Parse args ----
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -h|--help) print_help; exit 0 ;;
+    -m|--map) DO_MAP=true; shift ;;
+    -r|--read) DO_READ=true; shift ;;
+    -w|--write) DO_WRITE=true; shift ;;
+    -o|--offset) [[ $# -ge 2 ]] || err "Missing value for $1"; OFFSET="$2"; shift 2 ;;
+    -t|--target) [[ $# -ge 2 ]] || err "Missing value for $1"; TARGET="$2"; shift 2 ;;
+    -f|--file) [[ $# -ge 2 ]] || err "Missing value for $1"; ECFILE="$2"; shift 2 ;;
+    -n|--dry-run) DRY_RUN=true; shift ;;
+    -i|--i-understand-this-could-destroy-my-ec) ACK_RISK=true; shift ;;
+    -V|--verbose) VERBOSE=true; shift ;;
+    --) shift; break ;;
+    *) err "Unknown option: $1 (use -h for help)" ;;
+  esac
+done
+
+# ---- Startup checks ----
+
+# 1) Must be root
+if [[ "${EUID:-$(id -u)}" -ne 0 ]]; then
+  err "This script must be run as root."
+fi
+
+# 2) modinfo --filename ec_sys
+MODINFO_OUT="$(modinfo --filename ec_sys 2>&1 || true)"
+MODINFO_RC=0
+if ! modinfo --filename ec_sys >/dev/null 2>&1; then
+  MODINFO_RC=$?
+fi
+log "modinfo rc=${MODINFO_RC}; output: ${MODINFO_OUT}"
+
+if (( MODINFO_RC != 0 )); then
+  err $'Unable to locate ec_sys module information.\nYour kernel must enable ACPI EC debugfs support:\n  CONFIG_ACPI_EC_DEBUGFS=y (built-in) or =m (module)'
+fi
+
+# 3) Inspect /sys/module/ec_sys/parameters/write_support
+if [[ ! -r /sys/module/ec_sys/parameters/write_support ]]; then
+  err "ec_sys appears present, but /sys/module/ec_sys/parameters/write_support is missing. Is the module loaded?"
+fi
+
+WRITE_SUPPORT_VAL="$(tr -d ' \t\r\n' < /sys/module/ec_sys/parameters/write_support || true)"
+log "ec_sys write_support current value: '${WRITE_SUPPORT_VAL}'"
+
+if [[ "${WRITE_SUPPORT_VAL}" == "Y" ]]; then
+  log "ec_sys write_support=Y — proceeding."
+else
+  # write_support is N — check whether ec_sys is builtin vs module
+  if [[ "${MODINFO_OUT}" == "(builtin)" ]]; then
+    err $'ec_sys is built-in and write_support=N.\nReboot with kernel cmdline: ec_sys.write_support=y\nor recompile ec_sys as a loadable module to toggle this dynamically.'
+  else
+    # It's a module; reload with write_support=y
+    log "Attempting to reload ec_sys with write_support=y..."
+    modprobe -r ec_sys || err "Failed to unload ec_sys"
+    modprobe ec_sys write_support=y || err "Failed to load ec_sys with write_support=y"
+    RESTORE_EC_SYS=true
+    # Re-check value
+    NEW_VAL="$(tr -d ' \t\r\n' < /sys/module/ec_sys/parameters/write_support || true)"
+    [[ "${NEW_VAL}" == "Y" ]] || err "ec_sys write_support did not become 'Y' after reload."
+    log "ec_sys reloaded with write_support=Y."
+  fi
+fi
+
+# ---- Validate EC file ----
+[[ -e "$ECFILE" ]] || err "EC file not found: $ECFILE (is debugfs mounted? path correct?)"
+[[ -r "$ECFILE" ]] || err "EC file not readable: $ECFILE"
+# Only require write perms if we are going to write and not in dry-run
+if $DO_WRITE && ! $DRY_RUN; then
+  [[ -w "$ECFILE" ]] || err "EC file not writable: $ECFILE"
+fi
+
+# ---- Compute offset/target ----
+DEC_OFFSET="$(to_decimal_offset "$OFFSET")"
+HEX_OFFSET="$(printf '0x%X' "$DEC_OFFSET")"
+
+if $DO_WRITE; then
+  is_hex_byte "$TARGET" || err "Invalid --target byte: $TARGET (use AA or 0xAA)"
+  TARGET_NORM="$(normalize_hex_byte "$TARGET")"
+fi
+
+# ---- Actions ----
+if $DO_MAP; then
+  show_map
+fi
+
+if $DO_READ; then
+  VAL="$(read_byte "$ECFILE" "$DEC_OFFSET")"
+  echo "Offset ${HEX_OFFSET} (dec ${DEC_OFFSET}): 0x${VAL}"
+fi
+
+if $DO_WRITE; then
+  if $DRY_RUN; then
+    echo "[dry-run] Would write 0x${TARGET_NORM} to ${HEX_OFFSET} (dec ${DEC_OFFSET}) in ${ECFILE}"
+  else
+    # Safety: require explicit risk acknowledgement or show a 5s countdown
+    if ! $ACK_RISK; then
+      warn_countdown
+    fi
+    log "Writing 0x${TARGET_NORM} to ${HEX_OFFSET} in ${ECFILE}..."
+    write_byte "$ECFILE" "$DEC_OFFSET" "$TARGET_NORM"
+    VAL_AFTER="$(read_byte "$ECFILE" "$DEC_OFFSET")"
+    echo "Offset ${HEX_OFFSET} (dec ${DEC_OFFSET}): 0x${VAL_AFTER}"
+    echo "Write complete. (Note: EC writes may persist only until next cold power-on.)"
+  fi
+fi
+
+if ! $DO_MAP && ! $DO_READ && ! $DO_WRITE; then
+  echo "No action specified. Try: -m (map), -r (read), or -w (write). See -h for usage."
+  exit 1
+fi
