@@ -205,9 +205,25 @@ if (( MODINFO_RC != 0 )); then
   err $'Unable to locate ec_sys module information.\nYour kernel must enable ACPI EC debugfs support:\n  CONFIG_ACPI_EC_DEBUGFS=y (built-in) or =m (module)'
 fi
 
-# 3) Inspect /sys/module/ec_sys/parameters/write_support
+# 3) Ensure ec_sys is loaded, then inspect /sys/module/ec_sys/parameters/write_support
 if [[ ! -r /sys/module/ec_sys/parameters/write_support ]]; then
-  err "ec_sys appears present, but /sys/module/ec_sys/parameters/write_support is missing. Is the module loaded?"
+  log "ec_sys not currently loaded (no write_support parameter). Attempting to load with write_support=n..."
+  if modprobe ec_sys write_support=n 2>/dev/null; then
+    echo "[info] ec_sys module was not loaded; it has now been loaded with write_support=n."
+    echo "[hint] To have ec_sys load automatically at boot, you can add it to /etc/modules-load.d/, e.g.:"
+    echo '  echo "ec_sys" >> /etc/modules-load.d/ec_sys.conf'
+    echo
+  else
+    err $'Failed to load ec_sys module.\n\nYour kernel may have it disabled or not built at all.\n'\
+"Ensure CONFIG_ACPI_EC_DEBUGFS is enabled in your kernel config."
+  fi
+  # Give kernel a moment to populate /sys
+  sleep 0.2
+fi
+
+if [[ ! -r /sys/module/ec_sys/parameters/write_support ]]; then
+  err $'ec_sys appears present, but /sys/module/ec_sys/parameters/write_support is still missing after modprobe.\n'\
+"Double-check your kernel config: CONFIG_ACPI_EC_DEBUGFS must be set."
 fi
 
 WRITE_SUPPORT_VAL="$(tr -d ' \t\r\n' < /sys/module/ec_sys/parameters/write_support || true)"
@@ -216,21 +232,24 @@ log "ec_sys write_support current value: '${WRITE_SUPPORT_VAL}'"
 if [[ "${WRITE_SUPPORT_VAL}" == "Y" ]]; then
   log "ec_sys write_support=Y — proceeding."
 else
-  # write_support is N — check whether ec_sys is builtin vs module
+  # write_support is N — check whether ec_sys is builtin vs module vs loadable file
   if [[ "${MODINFO_OUT}" == "(builtin)" ]]; then
     err $'ec_sys is built-in and write_support=N.\nReboot with kernel cmdline: ec_sys.write_support=y\nor recompile ec_sys as a loadable module to toggle this dynamically.'
-  else
-    # It's a module; reload with write_support=y
-    log "Attempting to reload ec_sys with write_support=y..."
-    modprobe -r ec_sys || err "Failed to unload ec_sys"
+  elif [[ -f "${MODINFO_OUT}" ]]; then
+    # MODINFO_OUT is a real file path → ec_sys is a module we can reload
+    log "Attempting to load ec_sys module with write_support=y..."
+    modprobe -r ec_sys 2>/dev/null || true
     modprobe ec_sys write_support=y || err "Failed to load ec_sys with write_support=y"
     RESTORE_EC_SYS=true
     # Re-check value
     NEW_VAL="$(tr -d ' \t\r\n' < /sys/module/ec_sys/parameters/write_support || true)"
     [[ "${NEW_VAL}" == "Y" ]] || err "ec_sys write_support did not become 'Y' after reload."
-    log "ec_sys reloaded with write_support=Y."
+    log "ec_sys loaded with write_support=Y."
+  else
+    err "Unexpected ec_sys module state: modinfo output='${MODINFO_OUT}'"
   fi
 fi
+
 
 # ---- Validate EC file ----
 [[ -e "$ECFILE" ]] || err "EC file not found: $ECFILE (is debugfs mounted? path correct?)"
