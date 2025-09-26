@@ -42,13 +42,16 @@ On the Minibook X (N150 platform), the EC byte at **offset `0xF0` (decimal 240)*
 # Show help
 sudo ./n150-ec-byte-bios -h
 
+# Just do it (-i sets explicit acknowledgement this might hose your EC)
+sudo ./n150-ec-byte-bios -w -i EC)
+
 # Show EC map
 sudo ./n150-ec-byte-bios -m
 
 # Read byte at default offset (0xF0 / 240)
 sudo ./n150-ec-byte-bios -r
 
-# Write 0xAA to offset 0xF0 (requires explicit acknowledgement)
+# Write 0xAA to offset 0xF0 (-i sets explicit acknowledgement this might hose your EC)
 sudo ./n150-ec-byte-bios -w -t 0xAA -i
 
 # Dry-run a write (no actual change)
@@ -62,7 +65,7 @@ README.md — This file
 ## Future Work
 - Expand EC reverse-engineering notes
 - Collect BIOS settings and quirks
-- Add more utilities for power management, display scaling, and hardware toggles
+- Add more utilities for power management and hardware toggles
 
 ## Disclaimer
 These tools are experimental and intended for advanced users.
