@@ -56,6 +56,7 @@ sudo ./n150-ec-byte-bios -w -t 0xAA -i
 
 # Dry-run a write (no actual change)
 sudo ./n150-ec-byte-bios -w -t 0xAA -n
+```
 
 ## Repository Layout
 - tools/ — Scripts and utilities (currently: n150-ec-byte-bios)
