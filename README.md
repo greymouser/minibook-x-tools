@@ -40,22 +40,22 @@ On the Minibook X (N150 platform), the EC byte at **offset `0xF0` (decimal 240)*
 
 ```bash
 # Show help
-sudo ./n150-ec-byte-bios -h
+sudo ./tools/n150-ec-byte-bios -h
 
 # Just do it (-i sets explicit acknowledgement this might hose your EC)
-sudo ./n150-ec-byte-bios -w -i EC)
+sudo ./tools/n150-ec-byte-bios -w -i
 
 # Show EC map
-sudo ./n150-ec-byte-bios -m
+sudo ./tools/n150-ec-byte-bios -m
 
 # Read byte at default offset (0xF0 / 240)
-sudo ./n150-ec-byte-bios -r
+sudo ./tools/n150-ec-byte-bios -r
 
 # Write 0xAA to offset 0xF0 (-i sets explicit acknowledgement this might hose your EC)
-sudo ./n150-ec-byte-bios -w -t 0xAA -i
+sudo ./tools/n150-ec-byte-bios -w -t 0xAA -i
 
 # Dry-run a write (no actual change)
-sudo ./n150-ec-byte-bios -w -t 0xAA -n
+sudo ./tools/n150-ec-byte-bios -w -t 0xAA -n
 ```
 
 ## Repository Layout
