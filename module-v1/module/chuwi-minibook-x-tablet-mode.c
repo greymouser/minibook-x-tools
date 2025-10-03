@@ -16,8 +16,10 @@
  * Copyright (c) 2025 Armando DiCianno <armando@noonshy.com>
  */
 
-#include <linux/debugfs.h>
 #include <linux/init.h>
+#ifdef CONFIG_CHUWI_MINIBOOK_X_TABLET_MODE_DEBUGFS
+#include <linux/debugfs.h>
+#endif
 #include <linux/input.h>
 #include <linux/jiffies.h>
 #include <linux/kernel.h>
@@ -62,10 +64,12 @@ static struct input_dev *tm_input;
 static struct kobject *tm_kobj;
 static DEFINE_MUTEX(tm_lock);
 
+#ifdef CONFIG_CHUWI_MINIBOOK_X_TABLET_MODE_DEBUGFS
 /* Debugfs support */
 static struct dentry *debugfs_root;
 static struct dentry *debugfs_raw_data;
 static struct dentry *debugfs_calculations;
+#endif
 
 /* Power management */
 static struct platform_device *tm_pdev;
@@ -416,6 +420,7 @@ static void poll_work_fn(struct work_struct *w)
 }
 
 
+#ifdef CONFIG_CHUWI_MINIBOOK_X_TABLET_MODE_DEBUGFS
 /* ------------------------- Debugfs ------------------------- */
 
 static int debugfs_raw_data_show(struct seq_file *s, void *unused)
@@ -537,6 +542,7 @@ static void remove_debugfs_interface(void)
 	debugfs_remove_recursive(debugfs_root);
 	debugfs_root = NULL;
 }
+#endif /* CONFIG_CHUWI_MINIBOOK_X_TABLET_MODE_DEBUGFS */
 
 /* ------------------------- Power Management ------------------------- */
 
@@ -965,7 +971,9 @@ static int __init tm_init(void)
 	}
 
 	/* Create debugfs interface */
+#ifdef CONFIG_CHUWI_MINIBOOK_X_TABLET_MODE_DEBUGFS
 	create_debugfs_interface();
+#endif
 
 	INIT_DELAYED_WORK(&poll_work, poll_work_fn);
 
@@ -996,7 +1004,9 @@ err_driver:
 static void __exit tm_exit(void)
 {
 	cancel_delayed_work_sync(&poll_work);
+#ifdef CONFIG_CHUWI_MINIBOOK_X_TABLET_MODE_DEBUGFS
 	remove_debugfs_interface();
+#endif
 	if (tm_kobj) {
 		sysfs_remove_groups(tm_kobj, tm_groups);
 		kobject_put(tm_kobj);

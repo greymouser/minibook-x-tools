@@ -15,6 +15,14 @@ DESTDIR ?=
 INSTALL_MOD_PATH ?= $(DESTDIR)
 INSTALL_DIR := $(INSTALL_MOD_PATH)/lib/modules/$(shell uname -r)/extra
 
+# Configuration options (can be overridden)
+CONFIG_CHUWI_MINIBOOK_X_TABLET_MODE_DEBUGFS ?= n
+
+# Conditional compilation flags
+ifeq ($(CONFIG_CHUWI_MINIBOOK_X_TABLET_MODE_DEBUGFS),y)
+    ccflags-y += -DCONFIG_CHUWI_MINIBOOK_X_TABLET_MODE_DEBUGFS
+endif
+
 # Source files
 obj-m := $(MODULE_NAME).o
 
@@ -24,6 +32,14 @@ all: modules
 # Build the module
 modules:
 	$(MAKE) -C $(KDIR) M=$(PWD) modules
+
+# Build with debugfs support
+debugfs:
+	$(MAKE) CONFIG_CHUWI_MINIBOOK_X_TABLET_MODE_DEBUGFS=y modules
+
+# Build without debugfs support (explicit)
+no-debugfs:
+	$(MAKE) CONFIG_CHUWI_MINIBOOK_X_TABLET_MODE_DEBUGFS=n modules
 
 # Install the module
 install: modules
@@ -70,6 +86,8 @@ help:
 	@echo "Available targets:"
 	@echo "  all (default) - Build the module"
 	@echo "  modules       - Build the module"
+	@echo "  debugfs       - Build with debugfs support enabled"
+	@echo "  no-debugfs    - Build with debugfs support disabled"
 	@echo "  install       - Install the module (use DESTDIR= for staging)"
 	@echo "  uninstall     - Uninstall the module"
 	@echo "  clean         - Clean build artifacts"
@@ -78,6 +96,10 @@ help:
 	@echo "  reload        - Reload the module (unload + load)"
 	@echo "  info          - Show module information"
 	@echo "  help          - Show this help"
+	@echo ""
+	@echo "Configuration:"
+	@echo "  CONFIG_CHUWI_MINIBOOK_X_TABLET_MODE_DEBUGFS=y  - Enable debugfs support"
+	@echo "  CONFIG_CHUWI_MINIBOOK_X_TABLET_MODE_DEBUGFS=n  - Disable debugfs support (default)"
 	@echo ""
 	@echo "Variables:"
 	@echo "  KDIR          - Kernel build directory (default: /lib/modules/\$$(uname -r)/build)"

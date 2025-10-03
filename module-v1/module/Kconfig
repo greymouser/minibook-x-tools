@@ -1,0 +1,33 @@
+# Configuration options for Chuwi Minibook X Tablet Mode module
+#
+# Copyright (c) 2025 Armando DiCianno <armando@noonshy.com>
+# Licensed under GPL-2.0
+
+config CHUWI_MINIBOOK_X_TABLET_MODE
+	tristate "Chuwi Minibook X tablet mode detection"
+	depends on INPUT && SYSFS
+	help
+	  This driver provides tablet mode detection for the Chuwi Minibook X
+	  laptop by calculating hinge angles from accelerometer data.
+
+	  The driver creates an input device that reports SW_TABLET_MODE events
+	  based on configurable angle thresholds with hysteresis.
+
+	  Configuration is available through sysfs in /sys/class/tablet_mode/.
+
+	  If unsure, say N.
+
+config CHUWI_MINIBOOK_X_TABLET_MODE_DEBUGFS
+	bool "Enable debugfs support for Chuwi Minibook X tablet mode"
+	depends on CHUWI_MINIBOOK_X_TABLET_MODE && DEBUG_FS
+	help
+	  Enable debugfs interface for advanced debugging of the tablet mode
+	  detection algorithm.
+
+	  This creates files under /sys/kernel/debug/chuwi-minibook-x-tablet-mode/:
+	  - raw_data: Shows current accelerometer vectors and timestamps
+	  - calculations: Shows detailed angle calculations and algorithm state
+
+	  This option is primarily useful for development and troubleshooting.
+	  
+	  If unsure, say N.

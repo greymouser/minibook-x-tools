@@ -32,7 +32,9 @@ sudo modprobe chuwi-minibook-x-tablet-mode
 
 ### Makefile Targets
 
-- `make` or `make all` - Build the module (default)
+- `make` or `make all` - Build the module (default, without debugfs)
+- `make debugfs` - Build with debugfs interface enabled
+- `make no-debugfs` - Build explicitly without debugfs support
 - `make install` - Install the module to the system
 - `make uninstall` - Remove the module from the system
 - `make clean` - Clean build artifacts
@@ -41,6 +43,29 @@ sudo modprobe chuwi-minibook-x-tablet-mode
 - `make reload` - Reload the module (unload + load)
 - `make info` - Show module information
 - `make help` - Show all available targets
+
+### Build Configuration
+
+The module supports conditional compilation of the debugfs interface:
+
+- **Release build (default)**: `make` or `make no-debugfs`
+  - Smaller binary size (~29KB smaller)
+  - No debugfs dependencies
+  - Suitable for production use
+
+- **Debug build**: `make debugfs` 
+  - Includes debugfs interface for advanced debugging
+  - Requires `CONFIG_DEBUG_FS=y` in kernel configuration
+  - Creates files under `/sys/kernel/debug/chuwi-minibook-x-tablet-mode/`
+
+You can also set the configuration explicitly:
+```bash
+# Build with debugfs support
+make CONFIG_CHUWI_MINIBOOK_X_TABLET_MODE_DEBUGFS=y modules
+
+# Build without debugfs support
+make CONFIG_CHUWI_MINIBOOK_X_TABLET_MODE_DEBUGFS=n modules
+```
 
 ### Installation Variables
 
@@ -99,6 +124,8 @@ modinfo chuwi-minibook-x-tablet-mode
 
 ### DebugFS
 
+The debugfs interface is available when the module is built with `make debugfs`:
+
 ```bash
 # View raw sensor data
 cat /sys/kernel/debug/chuwi-minibook-x-tablet-mode/raw_data
@@ -106,6 +133,11 @@ cat /sys/kernel/debug/chuwi-minibook-x-tablet-mode/raw_data
 # View calculation details
 cat /sys/kernel/debug/chuwi-minibook-x-tablet-mode/calculations
 ```
+
+**Note**: Debugfs support requires:
+- Building with `make debugfs` or `CONFIG_CHUWI_MINIBOOK_X_TABLET_MODE_DEBUGFS=y`
+- Kernel built with `CONFIG_DEBUG_FS=y`
+- debugfs mounted (usually automatic)
 
 ## License
 
