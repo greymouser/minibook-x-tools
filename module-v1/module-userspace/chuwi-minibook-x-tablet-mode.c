@@ -29,10 +29,13 @@
 #define PROGRAM_NAME "chuwi-minibook-x-tablet-mode"
 #define VERSION "1.0"
 
+/* Device name maximum length */
+#define DEVICE_NAME_MAX 128
+
 /* Configuration */
 struct config {
-    char base_dev[PATH_MAX];
-    char lid_dev[PATH_MAX];
+    char base_dev[DEVICE_NAME_MAX];
+    char lid_dev[DEVICE_NAME_MAX];
     unsigned int poll_ms;
     int daemon_mode;
     int verbose;
