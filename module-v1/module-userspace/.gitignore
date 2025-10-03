@@ -1,0 +1,34 @@
+# Build artifacts
+chuwi-minibook-x-tablet-mode
+*.o
+*.core
+
+# Temporary files
+*~
+*.swp
+*.swo
+.*.tmp
+
+# Distribution packages
+*.tar.gz
+*.tar.bz2
+*.tar.xz
+
+# Debug files
+*.gdb_history
+vgcore.*
+
+# Test installation directories
+/tmp/test-install/
+
+# IDE/Editor files
+.vscode/
+.idea/
+*.code-workspace
+
+# Backup files
+*.bak
+*~
+
+# Log files
+*.log

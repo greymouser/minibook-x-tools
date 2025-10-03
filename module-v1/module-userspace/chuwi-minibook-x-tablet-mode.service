@@ -1,0 +1,43 @@
+[Unit]
+Description=Chuwi Minibook X Tablet Mode Feeder
+Documentation=man:chuwi-minibook-x-tablet-mode(8)
+After=sys-subsystem-iio.device-base.device sys-subsystem-iio.device-lid.device
+Wants=sys-subsystem-iio.device-base.device sys-subsystem-iio.device-lid.device
+Requires=sys-kernel-chuwi-minibook-x-tablet-mode.device
+After=sys-kernel-chuwi-minibook-x-tablet-mode.device
+
+[Service]
+Type=exec
+ExecStart=/usr/sbin/chuwi-minibook-x-tablet-mode-wrapper
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=30
+TimeoutStopSec=10
+
+# Security settings
+User=nobody
+Group=nobody
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=false
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RestrictNamespaces=true
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+# Allow access to IIO sysfs and our kernel module sysfs
+ReadOnlyPaths=/sys/bus/iio
+ReadWritePaths=/sys/kernel/chuwi-minibook-x-tablet-mode
+
+# Environment
+EnvironmentFile=-/etc/default/chuwi-minibook-x-tablet-mode
+
+[Install]
+WantedBy=multi-user.target
