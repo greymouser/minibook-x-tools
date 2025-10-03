@@ -1,0 +1,189 @@
+#!/usr/bin/env bash
+# MDA6655 Split Tool - Create second MXC4005 accelerometer devices
+#
+# This script automatically creates the second MXC4005 accelerometer device
+# on Chuwi Minibook X systems where ACPI/BIOS only exposes one device.
+# It's typically called by udev rules when the system detects hardware.
+#
+# Copyright (c) 2025 Armando DiCianno <armando@noonshy.com>
+# Licensed under GPL-2.0
+
+set -euo pipefail
+
+# Default configuration
+ADDR_HEX="0x15"            # MXC4005 7-bit I2C address
+DRIVER="mxc4005"           # Kernel driver name
+
+# ACPI paths for the I2C controllers that host the sensors
+# These should be verified against your system's ACPI namespace
+CTRL_ACPI_PATHS=( "\_SB_.PC00.I2C0" "\_SB_.PC00.I2C2" )
+
+# Source configuration file if it exists
+CONFIG_FILE="/etc/default/mda6655-split"
+if [[ -f "$CONFIG_FILE" ]]; then
+    # shellcheck source=/dev/null
+    source "$CONFIG_FILE"
+fi
+
+# Logging functions
+log_info() {
+    echo "mda6655-split: $*" >&2
+}
+
+log_error() {
+    echo "mda6655-split: ERROR: $*" >&2
+}
+
+# Show usage information
+usage() {
+    cat << EOF
+Usage: mda6655-split [OPTIONS]
+
+Create second MXC4005 accelerometer devices on Chuwi Minibook X systems.
+
+Options:
+  -h, --help     Show this help message
+  -v, --verbose  Enable verbose output
+  -d, --dry-run  Show what would be done without making changes
+
+Configuration:
+  Settings can be customized in /etc/default/mda6655-split.conf
+  
+This tool is typically called automatically by udev rules.
+EOF
+}
+
+# Parse command line arguments
+VERBOSE=0
+DRY_RUN=0
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        -v|--verbose)
+            VERBOSE=1
+            shift
+            ;;
+        -d|--dry-run)
+            DRY_RUN=1
+            shift
+            ;;
+        *)
+            log_error "Unknown option: $1"
+            usage
+            exit 1
+            ;;
+    esac
+done
+
+# Verbose logging helper
+log_verbose() {
+    [[ $VERBOSE -eq 1 ]] && log_info "$*"
+}
+
+# Map an ACPI controller path to an i2c adapter number
+acpi_to_i2c() {
+    local acpi_ctrl="$1"
+    log_verbose "Looking for I2C adapter for ACPI path: $acpi_ctrl"
+    
+    for a in /sys/bus/i2c/devices/i2c-*; do
+        # Check if adapter's firmware_node path exists
+        if [[ -f "$a/firmware_node/path" ]]; then
+            local p; p="$(<"$a/firmware_node/path")"
+            # Normalize underscores (\_SB_ vs \_SB.)
+            p="${p//\_/.}" ; local target="${acpi_ctrl//\_/.}"
+            log_verbose "  Checking adapter $(basename "$a"): $p"
+            if [[ "$p" == *"$target" ]]; then
+                local adapter_num
+                adapter_num=$(basename "$a" | cut -d- -f2)
+                log_verbose "  Found matching adapter: i2c-$adapter_num"
+                echo "$adapter_num"
+                return 0
+            fi
+        fi
+    done
+    log_verbose "  No adapter found for $acpi_ctrl"
+    return 1
+}
+
+# Check if a client already exists at ADDR_HEX on adapter $1
+client_exists() {
+    local bus="$1" addr_dec device_path
+    addr_dec=$(( ADDR_HEX ))
+    device_path="/sys/bus/i2c/devices/${bus}-$(printf '%04x' "$addr_dec")"
+    
+    log_verbose "  Checking for existing device: $device_path"
+    if [[ -e "$device_path" ]]; then
+        log_verbose "  Device already exists"
+        return 0
+    fi
+    
+    # Also check name-based detection for existing devices
+    local name_files=(/sys/bus/i2c/devices/${bus}-*/name)
+    if [[ -f "${name_files[0]}" ]]; then
+        for name_file in "${name_files[@]}"; do
+            if [[ -f "$name_file" ]] && grep -qi "$DRIVER" "$name_file" 2>/dev/null; then
+                log_verbose "  Found existing $DRIVER device via name check"
+                return 0
+            fi
+        done
+    fi
+    
+    log_verbose "  No existing device found"
+    return 1
+}
+
+# Main logic: try to create the client if missing on each controller
+log_info "Scanning for MXC4005 accelerometer devices..."
+created=0
+total_controllers=0
+
+for ctrl in "${CTRL_ACPI_PATHS[@]}"; do
+    log_verbose "Processing controller: $ctrl"
+    total_controllers=$((total_controllers + 1))
+    
+    if bus=$(acpi_to_i2c "$ctrl"); then
+        log_verbose "Found I2C bus $bus for controller $ctrl"
+        
+        if ! client_exists "$bus"; then
+            local new_device_file="/sys/bus/i2c/devices/i2c-${bus}/new_device"
+            log_verbose "Attempting to create device on bus $bus"
+            
+            if [[ ! -w "$new_device_file" ]]; then
+                log_error "Cannot write to $new_device_file (permission denied)"
+                continue
+            fi
+            
+            if [[ $DRY_RUN -eq 1 ]]; then
+                log_info "DRY RUN: Would create device with: echo '$DRIVER $ADDR_HEX' > '$new_device_file'"
+                created=1
+            else
+                if echo "$DRIVER $ADDR_HEX" > "$new_device_file" 2>/dev/null; then
+                    log_info "Successfully created $DRIVER device on i2c-$bus"
+                    created=1
+                else
+                    log_error "Failed to create device on i2c-$bus"
+                fi
+            fi
+        else
+            log_verbose "Device already exists on bus $bus, skipping"
+        fi
+    else
+        log_verbose "No I2C adapter found for controller $ctrl"
+    fi
+done
+
+# Summary
+if [[ $created -eq 1 ]]; then
+    log_info "Device creation completed successfully"
+elif [[ $total_controllers -eq 0 ]]; then
+    log_error "No ACPI controllers found"
+else
+    log_verbose "No new devices needed to be created"
+fi
+
+# Exit status hint (udev ignores output; this is for manual runs)
+exit $created
