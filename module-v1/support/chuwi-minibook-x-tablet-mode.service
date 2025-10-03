@@ -1,0 +1,21 @@
+[Unit]
+Description=Chuwi MiniBook X Tablet Mode wrapper (IIO -> chuwi-miniboo-x-tablet-mode-wrapper)
+After=systemd-udevd.service
+Wants=systemd-udevd.service
+
+[Service]
+Type=simple
+EnvironmentFile=-/etc/default/chuwi-minibook-x-tablet-mode
+# Optional: ensure your kernel module is loaded (comment out if you autoload it)
+# ExecStartPre=/sbin/modprobe chuwi-minibook-x-tablet-mode
+# Helps beat races with udev bringing up iio devices
+ExecStartPre=/usr/bin/udevadm settle
+ExecStart=/usr/local/sbin/chuwi-minibook-x-tablet-mode-wrapper
+Restart=on-failure
+RestartSec=2s
+Nice=5
+# Slightly restrict
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=multi-user.target

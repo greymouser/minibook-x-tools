@@ -1,0 +1,9 @@
+[Unit]
+Description=Start Chuwi tabletmode feeder when IIO devices show up
+
+[Path]
+PathExists=/sys/bus/iio/devices/iio:device0/in_accel_x_raw
+PathExists=/sys/bus/iio/devices/iio:device1/in_accel_x_raw
+
+[Install]
+WantedBy=multi-user.target

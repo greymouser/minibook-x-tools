@@ -1,0 +1,10 @@
+*.ko
+*.mod
+*.mod.c
+*.o
+..module*
+.chuwi*
+.module*
+.Module*
+Module.symvers
+modules.order
