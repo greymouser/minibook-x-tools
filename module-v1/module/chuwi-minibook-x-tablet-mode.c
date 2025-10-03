@@ -381,17 +381,20 @@ static void evaluate_and_report(void)
 			new_state = 1;
 		} else if (signed_mode) {
 			/* Signed space is circular: 0°≈closed, 360°≈tablet.
-			 * Tablet region = [enter..360] ∪ [0..exit].
-			 * Enter when we cross into the region; exit when we leave it.
+			 * Use directional hysteresis - only change state when crossing thresholds.
+			 * Enter tablet mode when crossing INTO the tablet region (>= enter).
+			 * Exit tablet mode when crossing OUT of the tablet region (<= exit).
 			 */
-			bool in_tablet_region = (a >= enter) || (a <= exit);
-
-			if (!cur_tablet && in_tablet_region)
+			if (!cur_tablet && a >= enter) {
+				/* Not in tablet mode and angle >= enter threshold -> enter tablet mode */
 				new_state = 1;
-			else if (cur_tablet && !in_tablet_region)
+			} else if (cur_tablet && a <= exit) {
+				/* In tablet mode and angle <= exit threshold -> exit tablet mode */
 				new_state = 0;
-			else
+			} else {
+				/* No threshold crossed, maintain current state */
 				new_state = cur_tablet;
+			}
 		} else {
 			/* Unsigned space (0..180): classic high/low compare. */
 			if (!cur_tablet && a >= enter)
@@ -492,7 +495,12 @@ static int debugfs_calculations_show(struct seq_file *s, void *unused)
 		enter = min(enter + hysteresis_deg, 180u);
 
 	if (signed_mode) {
-		in_tablet_region = (last_angle >= enter) || (last_angle <= exit);
+		/* Use directional hysteresis logic for consistency with main logic */
+		if (!cur_tablet) {
+			in_tablet_region = (last_angle >= enter);
+		} else {
+			in_tablet_region = (last_angle > exit);
+		}
 	} else {
 		in_tablet_region = (last_angle >= enter);
 	}

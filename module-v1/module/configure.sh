@@ -84,15 +84,20 @@ build_config() {
             ;;
     esac
     
-    if [ $? -eq 0 ]; then
+    if [[ $? -eq 0 ]]; then
         log_success "Build completed successfully"
-        if [ -f "$SCRIPT_DIR/$MODULE_NAME.ko" ]; then
+        if [[ -f "$SCRIPT_DIR/$MODULE_NAME.ko" ]]; then
             local size=$(stat -c%s "$SCRIPT_DIR/$MODULE_NAME.ko")
             log_info "Module size: $size bytes"
             
             # Show whether debugfs symbols are present
-            local debugfs_symbols=$(objdump -t "$SCRIPT_DIR/$MODULE_NAME.ko" | grep -c "debugfs" || echo "0")
-            if [ "$debugfs_symbols" -gt 0 ]; then
+            local debugfs_symbols=0
+            if objdump -t "$SCRIPT_DIR/$MODULE_NAME.ko" >/dev/null 2>&1; then
+                debugfs_symbols=$(objdump -t "$SCRIPT_DIR/$MODULE_NAME.ko" 2>/dev/null | grep -c "debugfs" 2>/dev/null || echo "0")
+            fi
+            # Ensure we have a valid number
+            [[ "$debugfs_symbols" =~ ^[0-9]+$ ]] || debugfs_symbols=0
+            if [[ $debugfs_symbols -gt 0 ]]; then
                 log_info "Debugfs support: ENABLED ($debugfs_symbols symbols found)"
             else
                 log_info "Debugfs support: DISABLED (no debugfs symbols)"
@@ -107,9 +112,9 @@ build_config() {
 # Parse arguments
 CONFIG="release"
 
-if [ $# -eq 0 ]; then
+if [[ $# -eq 0 ]]; then
     CONFIG="release"
-elif [ $# -eq 1 ]; then
+elif [[ $# -eq 1 ]]; then
     case "$1" in
         release|debug)
             CONFIG="$1"
@@ -137,7 +142,7 @@ show_config_info "$CONFIG"
 build_config "$CONFIG"
 
 # Show usage information for debug builds
-if [ "$CONFIG" == "debug" ] && [ -f "$SCRIPT_DIR/$MODULE_NAME.ko" ]; then
+if [[ "$CONFIG" == "debug" && -f "$SCRIPT_DIR/$MODULE_NAME.ko" ]]; then
     echo ""
     log_info "Debug interface usage (after loading module):"
     echo "  • View raw data: cat /sys/kernel/debug/$MODULE_NAME/raw_data"
