@@ -97,6 +97,16 @@ make info
 modinfo chuwi-minibook-x-tablet-mode
 ```
 
+### DebugFS
+
+```bash
+# View raw sensor data
+cat /sys/kernel/debug/chuwi-minibook-x-tablet-mode/raw_data
+
+# View calculation details
+cat /sys/kernel/debug/chuwi-minibook-x-tablet-mode/calculations
+```
+
 ## License
 
 GPL-2.0 - See LICENSE file in the project root.
