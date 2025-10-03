@@ -1,0 +1,274 @@
+.\" Man page for tablet-mode-daemon
+.\" Copyright (c) 2025 Armando DiCianno <armando@noonshy.com>
+.\" Licensed under GPL-2.0
+.\"
+.TH TABLET-MODE-DAEMON 8 "October 2025" "1.0" "System Administration"
+.SH NAME
+tablet-mode-daemon \- Hyprland tablet mode integration daemon
+.SH SYNOPSIS
+.B tablet-mode-daemon
+.RI [ OPTIONS ]
+.SH DESCRIPTION
+.B tablet-mode-daemon
+is a userspace daemon that monitors SW_TABLET_MODE input events from the Linux kernel and triggers Hyprland window manager adjustments for tablet mode usage. The daemon provides seamless transitions between laptop and tablet modes by executing configurable scripts and built-in Hyprland optimizations.
+
+When tablet mode is detected, the daemon can:
+.IP \(bu 4
+Launch virtual keyboards (onboard, squeekboard, wvkbd)
+.IP \(bu 4
+Adjust window gaps and decorations for touch-friendly interfaces
+.IP \(bu 4
+Configure input settings for touch devices
+.IP \(bu 4
+Execute custom user scripts for tablet-specific applications
+.IP \(bu 4
+Apply window rules optimized for tablet usage
+
+When laptop mode is restored, the daemon reverses these changes to provide an optimal desktop experience.
+
+.SH OPTIONS
+.TP
+.B \-d, \-\-device \fIDEVICE\fR
+Specify the input device path for tablet mode events. Default is 
+.IR /dev/input/event20 .
+Use 
+.B libinput list-devices
+to find the correct device.
+
+.TP
+.B \-c, \-\-config \fIFILE\fR
+Load configuration from the specified file. See 
+.B CONFIGURATION
+section for file format details.
+
+.TP
+.B \-t, \-\-on\-tablet \fICOMMAND\fR
+Command to execute when entering tablet mode. This overrides the configuration file setting.
+
+.TP
+.B \-l, \-\-on\-laptop \fICOMMAND\fR
+Command to execute when entering laptop mode. This overrides the configuration file setting.
+
+.TP
+.B \-b, \-\-debounce \fIMS\fR
+Set debounce time in milliseconds to prevent rapid mode switching. Default is 500ms.
+
+.TP
+.B \-f, \-\-foreground
+Run in foreground instead of daemonizing. Useful for debugging and systemd integration.
+
+.TP
+.B \-v, \-\-verbose
+Enable verbose logging output.
+
+.TP
+.B \-h, \-\-help
+Display usage information and exit.
+
+.TP
+.B \-V, \-\-version
+Display version information and exit.
+
+.SH CONFIGURATION
+The daemon can be configured via a configuration file with key=value pairs. Comments start with #.
+
+.SS Configuration Options
+.TP
+.B tablet_device
+Path to the tablet mode input device (default: /dev/input/event20)
+
+.TP
+.B on_tablet_script
+Command to execute when entering tablet mode
+
+.TP
+.B on_laptop_script
+Command to execute when exiting tablet mode
+
+.TP
+.B debounce_ms
+Debounce time in milliseconds (default: 500)
+
+.TP
+.B verbose
+Enable verbose logging (0=disabled, 1=enabled)
+
+.SS Example Configuration
+.nf
+# ~/.config/tablet-mode.conf (user config)
+# /etc/tablet-mode/daemon.conf (system config)
+tablet_device=/dev/input/event20
+on_tablet_script=onboard &
+on_laptop_script=pkill onboard
+debounce_ms=500
+verbose=0
+.fi
+
+.SH BUILT-IN ACTIONS
+The daemon includes built-in Hyprland optimizations that are automatically applied:
+
+.SS Tablet Mode
+.IP \(bu 4
+Remove window gaps (gaps_in=0, gaps_out=0)
+.IP \(bu 4
+Disable window rounding (rounding=0)
+.IP \(bu 4
+Enable natural scrolling for touch devices
+.IP \(bu 4
+Apply window rules for virtual keyboards
+
+.SS Laptop Mode
+.IP \(bu 4
+Restore window gaps (gaps_in=5, gaps_out=10)
+.IP \(bu 4
+Restore window rounding (rounding=5)
+.IP \(bu 4
+Disable natural scrolling
+.IP \(bu 4
+Remove tablet-specific window rules
+
+.SH DEVICE DETECTION
+To find the correct tablet mode device:
+
+.nf
+.B sudo libinput list-devices | grep -i tablet
+.B cat /proc/bus/input/devices | grep -i tablet
+.fi
+
+The device typically appears as "Chuwi Minibook X Tablet Mode" or similar.
+
+.SH VIRTUAL KEYBOARDS
+The daemon supports integration with several virtual keyboards:
+
+.TP
+.B onboard
+GNOME's virtual keyboard, well-suited for desktop environments
+.TP
+.B squeekboard
+Designed for mobile/touch devices with good Wayland support
+.TP
+.B wvkbd
+Lightweight Wayland virtual keyboard with minimal dependencies
+
+.SH SYSTEMD INTEGRATION
+Install and enable the user service:
+
+.nf
+.B make install-user
+.B systemctl --user daemon-reload
+.B systemctl --user enable --now tablet-mode-daemon
+.fi
+
+Check service status:
+.nf
+.B systemctl --user status tablet-mode-daemon
+.B journalctl --user -u tablet-mode-daemon -f
+.fi
+
+.SH HYPRLAND INTEGRATION
+The daemon uses 
+.B hyprctl
+to communicate with Hyprland. Ensure Hyprland is running and accessible via the hyprctl command.
+
+Custom Hyprland configurations can be applied via the script options. For example:
+
+.nf
+on_tablet_script=bash -c '
+  hyprctl keyword decoration:blur:enabled false
+  hyprctl keyword animations:enabled false
+  onboard &
+'
+.fi
+
+.SH TROUBLESHOOTING
+.SS Permission Issues
+Ensure the user is in the 
+.B input
+group to access input devices:
+.nf
+.B sudo usermod -a -G input $USER
+.fi
+
+Log out and back in for group changes to take effect.
+
+.SS Device Not Found
+Check available input devices:
+.nf
+.B sudo libinput list-devices
+.B ls -la /dev/input/
+.fi
+
+Verify the tablet mode kernel module is loaded:
+.nf
+.B lsmod | grep chuwi
+.B dmesg | grep tablet
+.fi
+
+.SS Hyprland Integration Issues
+Verify hyprctl is working:
+.nf
+.B hyprctl version
+.B hyprctl clients
+.fi
+
+Check Hyprland environment variables:
+.nf
+.B echo $HYPRLAND_INSTANCE_SIGNATURE
+.fi
+
+.SH FILES
+.TP
+.I ~/.config/tablet-mode.conf
+User configuration file
+.TP
+.I /etc/tablet-mode/daemon.conf
+System-wide configuration file
+
+.TP
+.I ~/.local/bin/tablet-mode-daemon
+User-installed daemon binary
+
+.TP
+.I ~/.local/share/systemd/user/tablet-mode-daemon.service
+User systemd service file
+
+.TP
+.I /dev/input/event*
+Input device files for tablet mode events
+
+.SH EXAMPLES
+.SS Basic Usage
+Run daemon in foreground with verbose output:
+.nf
+.B tablet-mode-daemon -f -v
+.fi
+
+.SS Custom Configuration
+Use specific device and scripts:
+.nf
+.B tablet-mode-daemon \\
+    -d /dev/input/event21 \\
+    -t 'onboard &' \\
+    -l 'pkill onboard'
+.fi
+
+.SS Systemd Service
+Enable automatic startup:
+.nf
+.B systemctl --user enable --now tablet-mode-daemon
+.fi
+
+.SH SEE ALSO
+.BR libinput (1),
+.BR hyprctl (1),
+.BR systemctl (1),
+.BR onboard (1)
+
+.SH BUGS
+Report bugs to: https://github.com/greymouser/minibook-x-tools
+
+.SH AUTHOR
+Armando DiCianno <armando@noonshy.com>
+
+.SH COPYRIGHT
+Copyright (c) 2025 Armando DiCianno. Licensed under GPL-2.0.

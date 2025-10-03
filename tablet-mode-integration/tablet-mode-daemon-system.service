@@ -1,0 +1,28 @@
+[Unit]
+Description=Hyprland Tablet Mode Integration Daemon (System-wide)
+Documentation=man:tablet-mode-daemon(8)
+After=multi-user.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/tablet-mode-daemon -c /etc/tablet-mode/daemon.conf
+Restart=on-failure
+RestartSec=5
+User=root
+
+# Security settings
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+
+# Allow access to input devices and system resources
+SupplementaryGroups=input
+
+[Install]
+WantedBy=multi-user.target

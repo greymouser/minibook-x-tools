@@ -19,14 +19,15 @@ DEBUGFS ?= false
 ACCELEROMETERS_DIR := accelerometers
 MODULE_DIR := module-v1/module
 USERSPACE_DIR := module-v1/module-userspace
+TABLET_INTEGRATION_DIR := tablet-mode-integration
 
 # Components that support each target
-ALL_COMPONENTS := $(ACCELEROMETERS_DIR) $(MODULE_DIR) $(USERSPACE_DIR)
-INSTALL_COMPONENTS := $(ACCELEROMETERS_DIR) $(MODULE_DIR) $(USERSPACE_DIR)
-CLEAN_COMPONENTS := $(ACCELEROMETERS_DIR) $(MODULE_DIR) $(USERSPACE_DIR)
+ALL_COMPONENTS := $(ACCELEROMETERS_DIR) $(MODULE_DIR) $(USERSPACE_DIR) $(TABLET_INTEGRATION_DIR)
+INSTALL_COMPONENTS := $(ACCELEROMETERS_DIR) $(MODULE_DIR) $(USERSPACE_DIR) $(TABLET_INTEGRATION_DIR)
+CLEAN_COMPONENTS := $(ACCELEROMETERS_DIR) $(MODULE_DIR) $(USERSPACE_DIR) $(TABLET_INTEGRATION_DIR)
 
 # Default target - build all components
-all: build-accelerometers build-module build-userspace
+all: build-accelerometers build-module build-userspace build-tablet-integration
 	@echo "=== All components built successfully ==="
 
 # Individual component build targets
@@ -46,8 +47,12 @@ build-userspace:
 	@echo "=== Building userspace daemon ==="
 	@$(MAKE) -C $(USERSPACE_DIR) all || { echo "ERROR: Userspace daemon build failed"; exit 1; }
 
+build-tablet-integration:
+	@echo "=== Building tablet mode integration ==="
+	@$(MAKE) -C $(TABLET_INTEGRATION_DIR) all || { echo "ERROR: Tablet integration build failed"; exit 1; }
+
 # Install all components
-install: install-accelerometers install-module install-userspace
+install: install-accelerometers install-module install-userspace install-tablet-integration
 	@echo "=== All components installed successfully ==="
 
 install-accelerometers:
@@ -62,8 +67,12 @@ install-userspace:
 	@echo "=== Installing userspace daemon ==="
 	@$(MAKE) -C $(USERSPACE_DIR) install || { echo "ERROR: Userspace daemon installation failed"; exit 1; }
 
+install-tablet-integration:
+	@echo "=== Installing tablet mode integration ==="
+	@$(MAKE) -C $(TABLET_INTEGRATION_DIR) install || { echo "ERROR: Tablet integration installation failed"; exit 1; }
+
 # Uninstall all components
-uninstall: uninstall-accelerometers uninstall-module uninstall-userspace
+uninstall: uninstall-accelerometers uninstall-module uninstall-userspace uninstall-tablet-integration
 	@echo "=== All components uninstalled successfully ==="
 
 uninstall-accelerometers:
@@ -78,8 +87,12 @@ uninstall-userspace:
 	@echo "=== Uninstalling userspace daemon ==="
 	@$(MAKE) -C $(USERSPACE_DIR) uninstall || { echo "ERROR: Userspace daemon uninstallation failed"; exit 1; }
 
+uninstall-tablet-integration:
+	@echo "=== Uninstalling tablet mode integration ==="
+	@$(MAKE) -C $(TABLET_INTEGRATION_DIR) uninstall || { echo "ERROR: Tablet integration uninstallation failed"; exit 1; }
+
 # Clean all components
-clean: clean-accelerometers clean-module clean-userspace
+clean: clean-accelerometers clean-module clean-userspace clean-tablet-integration
 	@echo "=== All components cleaned successfully ==="
 
 clean-accelerometers:
@@ -93,6 +106,10 @@ clean-module:
 clean-userspace:
 	@echo "=== Cleaning userspace daemon ==="
 	@$(MAKE) -C $(USERSPACE_DIR) clean || { echo "ERROR: Userspace daemon clean failed"; exit 1; }
+
+clean-tablet-integration:
+	@echo "=== Cleaning tablet mode integration ==="
+	@$(MAKE) -C $(TABLET_INTEGRATION_DIR) clean || { echo "ERROR: Tablet integration clean failed"; exit 1; }
 
 # Debug builds (only affects userspace component)
 debug: build-accelerometers build-module debug-userspace

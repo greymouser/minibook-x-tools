@@ -1,0 +1,47 @@
+# Build artifacts
+tablet-mode-daemon
+*.o
+*.ko
+*.mod
+*.mod.c
+*.mod.o
+.*.cmd
+.tmp_versions/
+Module.symvers
+modules.order
+
+# Backup files
+*~
+*.bak
+*.orig
+*.rej
+
+# Editor temporary files
+.*.swp
+.*.swo
+*#
+
+# Debug files
+*.core
+core
+vgcore.*
+
+# Distribution packages
+*.tar.gz
+*.tar.bz2
+*.tar.xz
+*.zip
+
+# IDE files
+.vscode/
+.idea/
+*.sublime-*
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db

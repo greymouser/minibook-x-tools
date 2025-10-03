@@ -1,0 +1,31 @@
+[Unit]
+Description=Hyprland Tablet Mode Integration Daemon
+Documentation=man:tablet-mode-daemon(8)
+After=graphical-session.target
+Wants=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/tablet-mode-daemon -c %h/.config/tablet-mode.conf
+Restart=on-failure
+RestartSec=5
+
+# Security settings
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+
+# Allow access to input devices
+SupplementaryGroups=input
+
+# Environment variables
+Environment=XDG_RUNTIME_DIR=%t
+
+[Install]
+WantedBy=hyprland-session.target
