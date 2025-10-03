@@ -1,10 +1,27 @@
+# Kernel module build artifacts
 *.ko
 *.mod
 *.mod.c
 *.o
+*.o.d
+*.cmd
+*.tmp_versions/
 ..module*
 .chuwi*
 .module*
 .Module*
 Module.symvers
 modules.order
+Module.markers
+
+# DKMS artifacts
+dkms_config.conf
+
+# Backup files
+*~
+*.orig
+*.rej
+
+# OS specific
+.DS_Store
+Thumbs.db
