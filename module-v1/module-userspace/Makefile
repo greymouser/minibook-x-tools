@@ -18,6 +18,7 @@ LIBS := -lm
 PREFIX ?= /usr
 DESTDIR ?=
 BINDIR := $(PREFIX)/sbin
+LIBEXECDIR := $(PREFIX)/libexec/$(PROGRAM_NAME)
 SYSCONFDIR := $(PREFIX)/etc
 SYSTEMDDIR := $(PREFIX)/lib/systemd/system
 MANDIR := $(PREFIX)/share/man
@@ -56,8 +57,9 @@ clean:
 install: $(TARGET) install-config install-systemd install-man
 	@echo "Installing $(PROGRAM_NAME)..."
 	install -d $(DESTDIR)$(BINDIR)
-	install -m 755 $(TARGET) $(DESTDIR)$(BINDIR)/
-	install -m 755 $(WRAPPER) $(DESTDIR)$(BINDIR)/
+	install -d $(DESTDIR)$(LIBEXECDIR)
+	install -m 755 $(WRAPPER) $(DESTDIR)$(BINDIR)/$(PROGRAM_NAME)
+	install -m 755 $(TARGET) $(DESTDIR)$(LIBEXECDIR)/$(PROGRAM_NAME)
 	@echo "Installation completed successfully"
 
 # Install configuration files
@@ -91,8 +93,8 @@ install-man: $(MANPAGES)
 # Uninstall everything
 uninstall:
 	@echo "Uninstalling $(PROGRAM_NAME)..."
-	rm -f $(DESTDIR)$(BINDIR)/$(TARGET)
-	rm -f $(DESTDIR)$(BINDIR)/$(WRAPPER)
+	rm -f $(DESTDIR)$(BINDIR)/$(PROGRAM_NAME)
+	rm -rf $(DESTDIR)$(LIBEXECDIR)
 	rm -f $(DESTDIR)$(SYSTEMDDIR)/$(PROGRAM_NAME).service
 	rm -f $(DESTDIR)$(MANDIR)/man8/$(PROGRAM_NAME).8
 	rm -f $(DESTDIR)$(MANDIR)/man8/$(PROGRAM_NAME)-wrapper.8

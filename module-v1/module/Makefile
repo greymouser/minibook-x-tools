@@ -31,7 +31,7 @@ all: modules
 
 # Build the module
 modules:
-	$(MAKE) -C $(KDIR) M=$(PWD) modules
+	$(MAKE) -C $(KDIR) M=$(shell pwd) modules
 
 # Build with debugfs support
 debugfs:
@@ -46,7 +46,11 @@ install: modules
 	@echo "Installing $(MODULE_NAME) module..."
 	install -d $(INSTALL_DIR)
 	install -m 644 $(MODULE_NAME).ko $(INSTALL_DIR)/
-	/sbin/depmod -a
+	@if [ -z "$(DESTDIR)" ]; then \
+		/sbin/depmod -a; \
+	else \
+		echo "Note: Run '/sbin/depmod -a' after installation to update module dependencies"; \
+	fi
 
 # Uninstall the module
 uninstall:
