@@ -6,7 +6,7 @@ Wants=graphical-session.target
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/tablet-mode-daemon -c %h/.config/tablet-mode.conf
+ExecStart=/usr/bin/tablet-mode-daemon -c %h/.config/tablet-mode/daemon.conf
 Restart=on-failure
 RestartSec=5
 
@@ -21,7 +21,9 @@ ProtectControlGroups=true
 RestrictRealtime=true
 RestrictSUIDSGID=true
 
-# Allow access to input devices
+# IMPORTANT: User must be in the 'input' group for this service to work
+# Run: sudo usermod -a -G input $USER
+# Then log out and log back in
 SupplementaryGroups=input
 
 # Environment variables

@@ -41,4 +41,9 @@ wait_for "$SYSFS_DIR/base_vec" || { echo "tablet-mode sysfs not found: $SYSFS_DI
 wait_for "/sys/bus/iio/devices/$BASE_IIO/in_accel_x_raw" || { echo "IIO base not ready: $BASE_IIO"; exit 1; }
 wait_for "/sys/bus/iio/devices/$LID_IIO/in_accel_x_raw"  || { echo "IIO lid not ready: $LID_IIO"; exit 1; }
 
-exec /usr/libexec/chuwi-minibook-x-tablet-mode/chuwi-minibook-x-tablet-mode "$BASE_IIO" "$LID_IIO" "$POLL_MS"
+exec /usr/libexec/chuwi-minibook-x-tablet-mode/chuwi-minibook-x-tablet-mode \
+  --base-device "$BASE_IIO" \
+  --lid-device "$LID_IIO" \
+  --poll-ms "$POLL_MS" \
+  --sysfs-path "$SYSFS_DIR" \
+  --daemon

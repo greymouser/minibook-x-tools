@@ -23,6 +23,7 @@
 #include <limits.h>
 #include <stdarg.h>
 #include <time.h>
+#include <dirent.h>
 #include <linux/input.h>
 
 #ifndef PATH_MAX
@@ -50,7 +51,7 @@ struct config {
 /* Global state */
 static volatile sig_atomic_t running = 1;
 static struct config cfg = {
-    .tablet_device = "/dev/input/event20",  /* Default from our detection */
+    .tablet_device = "",  /* Empty = auto-detect */
     .config_file = "",
     .on_tablet_script = "",
     .on_laptop_script = "",
@@ -65,6 +66,7 @@ static struct timespec last_event_time = {0, 0};
 
 /* Forward declarations */
 static int load_config(const char *config_file);
+static int auto_detect_tablet_device(char *device_path, size_t path_size);
 
 /* Signal handlers */
 static void signal_handler(int sig)
@@ -244,17 +246,83 @@ static int get_initial_state(int fd)
     return tablet_mode;
 }
 
+/* Auto-detect tablet mode device by scanning /dev/input/event* */
+static int auto_detect_tablet_device(char *device_path, size_t path_size)
+{
+    DIR *input_dir;
+    struct dirent *entry;
+    char test_path[PATH_MAX];
+    int fd;
+    int found = 0;
+    
+    log_debug("Auto-detecting tablet mode device...");
+    
+    input_dir = opendir("/dev/input");
+    if (!input_dir) {
+        log_error("Failed to open /dev/input: %s", strerror(errno));
+        return -1;
+    }
+    
+    while ((entry = readdir(input_dir)) != NULL) {
+        /* Only check event devices */
+        if (strncmp(entry->d_name, "event", 5) != 0) {
+            continue;
+        }
+        
+        snprintf(test_path, sizeof(test_path), "/dev/input/%s", entry->d_name);
+        
+        /* Try to open the device */
+        fd = open(test_path, O_RDONLY);
+        if (fd < 0) {
+            log_debug("Cannot open %s: %s", test_path, strerror(errno));
+            continue;
+        }
+        
+        /* Check if device supports SW_TABLET_MODE */
+        if (check_device_capabilities(fd) == 0) {
+            log_info("Found tablet mode device: %s", test_path);
+            snprintf(device_path, path_size, "%s", test_path);
+            found = 1;
+            close(fd);
+            break;
+        }
+        
+        close(fd);
+    }
+    
+    closedir(input_dir);
+    
+    if (!found) {
+        log_error("No tablet mode device found in /dev/input/");
+        log_info("Try: sudo libinput list-devices | grep -i tablet");
+        return -1;
+    }
+    
+    return 0;
+}
+
 /* Main event monitoring loop */
 static int monitor_tablet_events(void)
 {
     int fd;
     struct input_event ev;
     ssize_t n;
+    char final_device[PATH_MAX];
+    
+    /* Auto-detect device if not specified */
+    if (!cfg.tablet_device[0]) {
+        if (auto_detect_tablet_device(final_device, sizeof(final_device)) < 0) {
+            return -1;
+        }
+    } else {
+        strncpy(final_device, cfg.tablet_device, sizeof(final_device) - 1);
+        final_device[sizeof(final_device) - 1] = '\0';
+    }
     
     /* Open tablet mode device */
-    fd = open(cfg.tablet_device, O_RDONLY);
+    fd = open(final_device, O_RDONLY);
     if (fd < 0) {
-        log_error("Failed to open device %s: %s", cfg.tablet_device, strerror(errno));
+        log_error("Failed to open device %s: %s", final_device, strerror(errno));
         return -1;
     }
     
@@ -267,10 +335,13 @@ static int monitor_tablet_events(void)
     /* Get and handle initial state */
     int initial_state = get_initial_state(fd);
     if (initial_state >= 0) {
-        handle_tablet_mode_change(initial_state);
+        /* Set the initial state but don't execute scripts on startup */
+        last_tablet_state = initial_state;
+        log_info("Initial state set to %s mode (no script execution)", 
+                 initial_state ? "tablet" : "laptop");
     }
     
-    log_info("Monitoring tablet mode events on %s", cfg.tablet_device);
+    log_info("Monitoring tablet mode events on %s", final_device);
     
     /* Event monitoring loop */
     while (running) {
@@ -278,7 +349,12 @@ static int monitor_tablet_events(void)
         
         if (n < 0) {
             if (errno == EINTR) {
-                continue;  /* Interrupted by signal */
+                /* Interrupted by signal - check if we should exit */
+                if (!running) {
+                    log_debug("Received signal, exiting gracefully");
+                    break;
+                }
+                continue;
             }
             log_error("Error reading from device: %s", strerror(errno));
             break;
@@ -314,10 +390,10 @@ static int load_config_with_precedence(const char *config_file)
         return load_config(config_file);
     }
     
-    /* Try user config first: ~/.config/tablet-mode.conf */
+    /* Try user config first: ~/.config/tablet-mode/daemon.conf */
     home = getenv("HOME");
     if (home) {
-        snprintf(user_config, sizeof(user_config), "%s/.config/tablet-mode.conf", home);
+        snprintf(user_config, sizeof(user_config), "%s/.config/tablet-mode/daemon.conf", home);
         if (access(user_config, R_OK) == 0) {
             log_debug("Loading user config: %s", user_config);
             if (load_config(user_config) == 0) {
@@ -326,7 +402,7 @@ static int load_config_with_precedence(const char *config_file)
         }
     }
     
-    /* If no user config found, try system config: /etc/tablet-mode.conf */
+    /* If no user config found, try system config: /etc/tablet-mode/daemon.conf */
     if (!loaded && access(system_config, R_OK) == 0) {
         log_debug("Loading system config: %s", system_config);
         if (load_config(system_config) == 0) {
@@ -408,7 +484,8 @@ static int setup_signals(void)
     memset(&sa, 0, sizeof(sa));
     sa.sa_handler = signal_handler;
     sigemptyset(&sa.sa_mask);
-    sa.sa_flags = SA_RESTART;
+    /* Don't use SA_RESTART - we want read() to be interrupted by signals */
+    sa.sa_flags = 0;
     
     if (sigaction(SIGTERM, &sa, NULL) < 0 ||
         sigaction(SIGINT, &sa, NULL) < 0 ||
@@ -427,7 +504,7 @@ static void usage(const char *program)
     printf("\nHyprland Tablet Mode Integration Daemon\n");
     printf("Monitors SW_TABLET_MODE events and triggers Hyprland tablet mode behaviors.\n\n");
     printf("OPTIONS:\n");
-    printf("  -d, --device DEVICE     Tablet mode input device (default: %s)\n", cfg.tablet_device);
+    printf("  -d, --device DEVICE     Tablet mode input device (default: auto-detect)\n");
     printf("  -c, --config FILE       Configuration file path (overrides auto-detection)\n");
     printf("  -t, --on-tablet CMD     Command to run when entering tablet mode\n");
     printf("  -l, --on-laptop CMD     Command to run when entering laptop mode\n");
@@ -442,7 +519,7 @@ static void usage(const char *program)
     printf("  2. User config: ~/.config/tablet-mode/daemon.conf\n");
     printf("  3. Default example scripts (if no config found)\n");
     printf("\nEXAMPLES:\n");
-    printf("  %s                                           # Use auto-detected config\n", program);
+    printf("  %s                                           # Use auto-detected device\n", program);
     printf("  %s -v -f                                     # Verbose, foreground\n", program);
     printf("  %s -c ~/.config/tablet-mode/daemon.conf      # Specific config\n", program);
     printf("  %s -t 'onboard' -l 'pkill onboard'          # Virtual keyboard\n", program);
@@ -522,7 +599,11 @@ int main(int argc, char *argv[])
     }
     
     log_info("Starting %s %s", PROGRAM_NAME, VERSION);
-    log_info("Device: %s, Debounce: %ums", cfg.tablet_device, cfg.debounce_ms);
+    if (cfg.tablet_device[0]) {
+        log_info("Device: %s (configured), Debounce: %ums", cfg.tablet_device, cfg.debounce_ms);
+    } else {
+        log_info("Device: auto-detect, Debounce: %ums", cfg.debounce_ms);
+    }
     
     /* Main monitoring loop */
     int ret = monitor_tablet_events();

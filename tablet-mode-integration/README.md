@@ -32,7 +32,24 @@ sudo make install
 make install-user
 ```
 
-### 2. Configure Your Scripts
+### 2. Add User to Input Group
+
+**IMPORTANT**: The daemon needs access to input devices to detect tablet mode events.
+Your user must be in the `input` group:
+
+```bash
+# Add your user to the input group
+sudo usermod -a -G input $USER
+
+# Log out and log back in for the group change to take effect
+```
+
+You can verify you're in the input group with:
+```bash
+groups | grep -q input && echo "✓ In input group" || echo "✗ Not in input group"
+```
+
+### 3. Configure Your Scripts
 
 ```bash
 # Copy example scripts to active configuration
@@ -43,7 +60,7 @@ cp ~/.config/tablet-mode/tablet-off.sh.example ~/.config/tablet-mode/tablet-off.
 cp ~/.config/tablet-mode/daemon.conf.example ~/.config/tablet-mode/daemon.conf
 ```
 
-### 3. Enable the Service
+### 4. Enable the Service
 
 ```bash
 systemctl --user daemon-reload
@@ -189,11 +206,15 @@ sudo libinput debug-events --device=/dev/input/event20
 
 ### Common Issues
 
-**Permission Denied on Input Device**
+**Permission Denied on Input Device / Service Failed at Step GROUP**
 ```bash
 # Add user to input group
 sudo usermod -a -G input $USER
 # Log out and back in
+
+# If you see "Failed at step GROUP" in journalctl:
+# This means your user is not in the input group
+# The service requires input group membership to access hardware events
 ```
 
 **Daemon Not Starting**

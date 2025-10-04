@@ -25,6 +25,7 @@ endif
 
 # Source files
 obj-m := $(MODULE_NAME).o
+chuwi-minibook-x-tablet-mode-objs := tablet_mode_main.o orientation_detection.o
 
 # Default target
 all: modules

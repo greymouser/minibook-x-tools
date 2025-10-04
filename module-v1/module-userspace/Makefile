@@ -19,7 +19,7 @@ PREFIX ?= /usr
 DESTDIR ?=
 BINDIR := $(PREFIX)/sbin
 LIBEXECDIR := $(PREFIX)/libexec/$(PROGRAM_NAME)
-SYSCONFDIR := $(PREFIX)/etc
+SYSCONFDIR := /etc
 SYSTEMDDIR := $(PREFIX)/lib/systemd/system
 MANDIR := $(PREFIX)/share/man
 
@@ -28,7 +28,9 @@ SOURCES := $(PROGRAM_NAME).c
 OBJECTS := $(SOURCES:.c=.o)
 TARGET := $(PROGRAM_NAME)
 WRAPPER := $(PROGRAM_NAME)-wrapper
-MANPAGES := $(PROGRAM_NAME).8 $(PROGRAM_NAME)-wrapper.8
+MANPAGES := $(PROGRAM_NAME).8
+DOCFILES := BINARY_DOCUMENTATION.md
+CONFIGFILES := $(PROGRAM_NAME).default
 
 # Default target
 all: $(TARGET)
@@ -54,7 +56,7 @@ clean:
 	rm -f $(TARGET) $(OBJECTS) *.core
 
 # Install the program and supporting files
-install: $(TARGET) install-config install-systemd install-man
+install: $(TARGET) install-config install-systemd install-man install-doc
 	@echo "Installing $(PROGRAM_NAME)..."
 	install -d $(DESTDIR)$(BINDIR)
 	install -d $(DESTDIR)$(LIBEXECDIR)
@@ -63,15 +65,11 @@ install: $(TARGET) install-config install-systemd install-man
 	@echo "Installation completed successfully"
 
 # Install configuration files
-install-config:
+install-config: $(PROGRAM_NAME).default
 	@echo "Installing configuration files..."
 	install -d $(DESTDIR)$(SYSCONFDIR)/default
-	@if [ ! -f $(DESTDIR)$(SYSCONFDIR)/default/$(PROGRAM_NAME) ]; then \
-		echo "# Configuration for $(PROGRAM_NAME)" > $(DESTDIR)$(SYSCONFDIR)/default/$(PROGRAM_NAME); \
-		echo "# Uncomment and modify as needed:" >> $(DESTDIR)$(SYSCONFDIR)/default/$(PROGRAM_NAME); \
-		echo "#BASE_IIO=iio:device0" >> $(DESTDIR)$(SYSCONFDIR)/default/$(PROGRAM_NAME); \
-		echo "#LID_IIO=iio:device1" >> $(DESTDIR)$(SYSCONFDIR)/default/$(PROGRAM_NAME); \
-		echo "#POLL_MS=100" >> $(DESTDIR)$(SYSCONFDIR)/default/$(PROGRAM_NAME); \
+	@if [[ ! -f $(DESTDIR)$(SYSCONFDIR)/default/$(PROGRAM_NAME) ]]; then \
+		install -m 644 $(PROGRAM_NAME).default $(DESTDIR)$(SYSCONFDIR)/default/$(PROGRAM_NAME); \
 		echo "Configuration file installed: $(DESTDIR)$(SYSCONFDIR)/default/$(PROGRAM_NAME)"; \
 	else \
 		echo "Configuration file already exists, not overwriting"; \
@@ -88,7 +86,12 @@ install-man: $(MANPAGES)
 	@echo "Installing man pages..."
 	install -d $(DESTDIR)$(MANDIR)/man8
 	install -m 644 $(PROGRAM_NAME).8 $(DESTDIR)$(MANDIR)/man8/
-	install -m 644 $(PROGRAM_NAME)-wrapper.8 $(DESTDIR)$(MANDIR)/man8/
+
+# Install documentation
+install-doc: $(DOCFILES)
+	@echo "Installing documentation..."
+	install -d $(DESTDIR)$(PREFIX)/share/doc/$(PROGRAM_NAME)
+	install -m 644 $(DOCFILES) $(DESTDIR)$(PREFIX)/share/doc/$(PROGRAM_NAME)/
 
 # Uninstall everything
 uninstall:
@@ -97,7 +100,7 @@ uninstall:
 	rm -rf $(DESTDIR)$(LIBEXECDIR)
 	rm -f $(DESTDIR)$(SYSTEMDDIR)/$(PROGRAM_NAME).service
 	rm -f $(DESTDIR)$(MANDIR)/man8/$(PROGRAM_NAME).8
-	rm -f $(DESTDIR)$(MANDIR)/man8/$(PROGRAM_NAME)-wrapper.8
+	rm -rf $(DESTDIR)$(PREFIX)/share/doc/$(PROGRAM_NAME)
 	@echo "Note: Configuration file $(DESTDIR)$(SYSCONFDIR)/default/$(PROGRAM_NAME) preserved"
 
 # Test the build
@@ -144,15 +147,6 @@ gdb: debug
 man: $(MANPAGES)
 	@echo "Viewing man page for $(PROGRAM_NAME)..."
 	man -l $(PROGRAM_NAME).8
-
-man-wrapper: $(MANPAGES)
-	@echo "Viewing man page for $(PROGRAM_NAME)-wrapper..."
-	man -l $(PROGRAM_NAME)-wrapper.8
-
-man-all: $(MANPAGES)
-	@echo "Viewing all man pages..."
-	man -l $(PROGRAM_NAME).8
-	man -l $(PROGRAM_NAME)-wrapper.8
 
 # Package for distribution
 dist: clean

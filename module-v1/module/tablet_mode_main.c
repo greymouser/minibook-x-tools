@@ -78,9 +78,6 @@ static struct platform_device *tm_pdev;
 static bool was_enabled_before_suspend;
 
 /* Last known gravity vectors (scaled ~1e6 for fixed-point ops). */
-struct vec3 {
-	s32 x, y, z;
-};
 
 /* Reasonable defaults: base “down”, lid “up” */
 static struct vec3 g_base = { 0, 0, 1000000 };
@@ -442,7 +439,6 @@ static void evaluate_and_report(void)
 	/* Update screen orientation detection using base accelerometer */
 	if (orientation_enabled) {
 		bool force_orient_update = (force_orientation >= 0);
-		enum screen_orientation old_orient = orient_state.current;
 		
 		if (force_orientation >= 0 && force_orientation <= 3) {
 			/* Force specific orientation */
