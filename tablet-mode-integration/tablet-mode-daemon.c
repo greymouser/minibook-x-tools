@@ -256,6 +256,7 @@ static int auto_detect_tablet_device(char *device_path, size_t path_size)
     int found = 0;
     
     log_debug("Auto-detecting tablet mode device...");
+    log_debug("Opening /dev/input directory");
     
     input_dir = opendir("/dev/input");
     if (!input_dir) {
@@ -263,6 +264,7 @@ static int auto_detect_tablet_device(char *device_path, size_t path_size)
         return -1;
     }
     
+    log_debug("Scanning /dev/input for event devices");
     while ((entry = readdir(input_dir)) != NULL) {
         /* Only check event devices */
         if (strncmp(entry->d_name, "event", 5) != 0) {
@@ -270,6 +272,7 @@ static int auto_detect_tablet_device(char *device_path, size_t path_size)
         }
         
         snprintf(test_path, sizeof(test_path), "/dev/input/%s", entry->d_name);
+        log_debug("Testing device: %s", test_path);
         
         /* Try to open the device */
         fd = open(test_path, O_RDONLY);
@@ -298,6 +301,7 @@ static int auto_detect_tablet_device(char *device_path, size_t path_size)
         return -1;
     }
     
+    log_debug("Auto-detection completed successfully");
     return 0;
 }
 
@@ -309,30 +313,42 @@ static int monitor_tablet_events(void)
     ssize_t n;
     char final_device[PATH_MAX];
     
+    log_debug("Starting monitor_tablet_events function");
+    
     /* Auto-detect device if not specified */
     if (!cfg.tablet_device[0]) {
+        log_debug("No device specified, starting auto-detection");
         if (auto_detect_tablet_device(final_device, sizeof(final_device)) < 0) {
+            log_error("Auto-detection failed, exiting");
             return -1;
         }
+        log_debug("Auto-detection succeeded: %s", final_device);
     } else {
+        log_debug("Using configured device: %s", cfg.tablet_device);
         strncpy(final_device, cfg.tablet_device, sizeof(final_device) - 1);
         final_device[sizeof(final_device) - 1] = '\0';
     }
     
+    log_debug("Opening device: %s", final_device);
     /* Open tablet mode device */
     fd = open(final_device, O_RDONLY);
     if (fd < 0) {
         log_error("Failed to open device %s: %s", final_device, strerror(errno));
         return -1;
     }
+    log_debug("Device opened successfully, fd=%d", fd);
     
     /* Check device capabilities */
+    log_debug("Checking device capabilities");
     if (check_device_capabilities(fd) < 0) {
+        log_error("Device capability check failed");
         close(fd);
         return -1;
     }
+    log_debug("Device capabilities verified");
     
     /* Get and handle initial state */
+    log_debug("Getting initial tablet mode state");
     int initial_state = get_initial_state(fd);
     if (initial_state >= 0) {
         /* Set the initial state but don't execute scripts on startup */
@@ -342,6 +358,7 @@ static int monitor_tablet_events(void)
     }
     
     log_info("Monitoring tablet mode events on %s", final_device);
+    log_debug("Entering main event loop");
     
     /* Event monitoring loop */
     while (running) {
@@ -350,6 +367,7 @@ static int monitor_tablet_events(void)
         if (n < 0) {
             if (errno == EINTR) {
                 /* Interrupted by signal - check if we should exit */
+                log_debug("Read interrupted by signal, running=%d", running);
                 if (!running) {
                     log_debug("Received signal, exiting gracefully");
                     break;
@@ -372,6 +390,7 @@ static int monitor_tablet_events(void)
         }
     }
     
+    log_debug("Exiting main event loop");
     close(fd);
     return 0;
 }
@@ -581,29 +600,49 @@ int main(int argc, char *argv[])
     }
     
     /* Load configuration file */
+    log_debug("Loading configuration file...");
     if (load_config_with_precedence(cfg.config_file) < 0) {
+        log_error("Failed to load configuration file");
         exit(1);
     }
+    log_debug("Configuration loaded successfully");
     
     /* Setup signal handlers */
+    log_debug("Setting up signal handlers...");
     if (setup_signals() < 0) {
+        log_error("Failed to setup signal handlers");
         exit(1);
     }
+    log_debug("Signal handlers setup successfully");
     
     /* Daemonize if requested */
     if (cfg.daemon_mode) {
+        log_debug("Daemonizing process...");
         if (daemon(0, 0) < 0) {
             log_error("Failed to daemonize: %s", strerror(errno));
             exit(1);
         }
+        log_debug("Daemonization successful");
     }
     
     log_info("Starting %s %s", PROGRAM_NAME, VERSION);
+    log_debug("Process PID: %d", getpid());
+    log_debug("User ID: %d, Group ID: %d", getuid(), getgid());
+    log_debug("Daemon mode: %s", cfg.daemon_mode ? "enabled" : "disabled");
+    log_debug("Verbose logging: %s", cfg.verbose ? "enabled" : "disabled");
+    
     if (cfg.tablet_device[0]) {
         log_info("Device: %s (configured), Debounce: %ums", cfg.tablet_device, cfg.debounce_ms);
     } else {
         log_info("Device: auto-detect, Debounce: %ums", cfg.debounce_ms);
     }
+    
+    log_debug("Configuration summary:");
+    log_debug("  Config file: %s", cfg.config_file[0] ? cfg.config_file : "(none specified)");
+    log_debug("  On tablet script: %s", cfg.on_tablet_script[0] ? cfg.on_tablet_script : "(none)");
+    log_debug("  On laptop script: %s", cfg.on_laptop_script[0] ? cfg.on_laptop_script : "(none)");
+    
+    log_debug("Starting main monitoring loop");
     
     /* Main monitoring loop */
     int ret = monitor_tablet_events();

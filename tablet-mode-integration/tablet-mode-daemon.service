@@ -1,33 +1,20 @@
 [Unit]
 Description=Hyprland Tablet Mode Integration Daemon
 Documentation=man:tablet-mode-daemon(8)
-After=graphical-session.target
-Wants=graphical-session.target
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/tablet-mode-daemon -c %h/.config/tablet-mode/daemon.conf
+ExecStart=/usr/bin/tablet-mode-daemon -f -c %h/.config/tablet-mode/daemon.conf
 Restart=on-failure
 RestartSec=5
 
-# Security settings
+# Minimal security settings for user service
 NoNewPrivileges=true
-PrivateTmp=true
-ProtectSystem=strict
-ProtectHome=read-only
-ProtectKernelTunables=true
-ProtectKernelModules=true
-ProtectControlGroups=true
-RestrictRealtime=true
-RestrictSUIDSGID=true
 
-# IMPORTANT: User must be in the 'input' group for this service to work
+# NOTE: User must be in the 'input' group for this service to work
 # Run: sudo usermod -a -G input $USER
 # Then log out and log back in
-SupplementaryGroups=input
-
-# Environment variables
-Environment=XDG_RUNTIME_DIR=%t
+# User services cannot change group membership - the user must already be in the group
 
 [Install]
-WantedBy=hyprland-session.target
+WantedBy=default.target
