@@ -30,6 +30,7 @@
 #include <linux/mutex.h>
 #include <linux/platform_device.h>
 #include <linux/pm.h>
+#include <linux/string.h>
 #include <linux/sysfs.h>
 #include <linux/workqueue.h>
 
@@ -701,23 +702,6 @@ static ssize_t show_force(struct kobject *k, struct kobj_attribute *a, char *buf
 	return scnprintf(buf, PAGE_SIZE, "%d (%s)\n", force_tablet, mode_str);
 }
 
-/* Simple case-insensitive string comparison for kernel space */
-static int kernel_strcasecmp(const char *s1, const char *s2)
-{
-	unsigned char c1, c2;
-	
-	do {
-		c1 = *s1++;
-		c2 = *s2++;
-		if (c1 >= 'A' && c1 <= 'Z')
-			c1 += 'a' - 'A';
-		if (c2 >= 'A' && c2 <= 'Z')
-			c2 += 'a' - 'A';
-	} while (c1 && c1 == c2);
-	
-	return c1 - c2;
-}
-
 static ssize_t store_force(struct kobject *k, struct kobj_attribute *a,
 			   const char *b, size_t l)
 {
@@ -734,11 +718,11 @@ static ssize_t store_force(struct kobject *k, struct kobj_attribute *a,
 		input[strlen(input) - 1] = '\0';
 
 	/* Try string parsing first */
-	if (kernel_strcasecmp(input, "laptop") == 0) {
+	if (strcasecmp(input, "laptop") == 0) {
 		v = 0;
-	} else if (kernel_strcasecmp(input, "tablet") == 0) {
+	} else if (strcasecmp(input, "tablet") == 0) {
 		v = 1;
-	} else if (kernel_strcasecmp(input, "auto") == 0) {
+	} else if (strcasecmp(input, "auto") == 0) {
 		v = -1;
 	} else {
 		/* Fall back to numeric parsing */
