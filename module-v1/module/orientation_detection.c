@@ -26,7 +26,7 @@
 /* Default configuration values */
 #define DEFAULT_HYSTERESIS_DEG          15      /* Hysteresis for orientation changes */
 #define DEFAULT_STABILITY_TIME_MS       100     /* Time to remain stable before switching */
-#define DEFAULT_FLAT_THRESHOLD_DEG      25      /* Consider flat if tilt < 25° */
+#define DEFAULT_FLAT_THRESHOLD_DEG      0       /* Disable flat detection entirely */
 #define DEFAULT_MOTION_THRESHOLD        500000  /* Motion detection threshold (scaled units) */
 #define DEFAULT_MOTION_SETTLE_MS        50      /* Wait after motion stops */
 #define DEFAULT_MIN_CONFIDENCE          70      /* Minimum confidence percentage */
@@ -197,6 +197,11 @@ static unsigned int calculate_confidence(const struct vec3 *gravity)
 static bool orientations_adjacent(enum screen_orientation a, enum screen_orientation b)
 {
 	if (a == b) return true;
+	
+	/* Allow any transition from/to UNKNOWN - it's the initial state */
+	if (a == ORIENT_UNKNOWN || b == ORIENT_UNKNOWN) return true;
+	
+	/* Don't allow transitions involving FLAT */
 	if (a >= ORIENT_FLAT || b >= ORIENT_FLAT) return false;
 	
 	/* Check if orientations are 90° apart */
@@ -265,8 +270,8 @@ bool orientation_update(struct orientation_state *state,
 	tilt = calculate_tilt_angle(gravity);
 	confidence = calculate_confidence(gravity);
 	
-	/* Check if device is flat */
-	if (tilt <= config->flat_threshold_deg) {
+	/* Check if device is flat - but not in laptop mode where screen is naturally vertical */
+	if (config->flat_threshold_deg > 0 && tilt <= config->flat_threshold_deg) {
 		new_orient = ORIENT_FLAT;
 	} else {
 		new_orient = angle_to_orientation(angle);
@@ -424,54 +429,15 @@ bool orientation_update_dual_sensor(struct orientation_state *state,
 		return orientation_update(state, config, lid_gravity, force_update);
 	} 
 	else if (hinge_angle >= 70 && hinge_angle <= 200) {
-		/* Laptop mode - use relative orientation detection */
-		
-		/* Calculate orientation relative to base */
-		struct vec3 relative_gravity;
-		
-		/* Project lid gravity onto base coordinate system */
-		/* This is a simplified relative calculation */
-		/* In laptop mode, we care about how the lid is rotated relative to the base */
-		
-		u64 base_mag = vec3_magnitude(base_gravity);
-		u64 lid_mag = vec3_magnitude(lid_gravity);
-		
-		if (base_mag == 0 || lid_mag == 0) {
-			return false; /* Invalid data */
-		}
-		
-		/* Calculate the cross product to find the relative orientation axis */
-		struct vec3 cross;
-		cross.x = (s64)base_gravity->y * lid_gravity->z - (s64)base_gravity->z * lid_gravity->y;
-		cross.y = (s64)base_gravity->z * lid_gravity->x - (s64)base_gravity->x * lid_gravity->z;  
-		cross.z = (s64)base_gravity->x * lid_gravity->y - (s64)base_gravity->y * lid_gravity->x;
-		
-		/* Use the cross product magnitude to determine if screen is rotated */
-		u64 cross_mag = vec3_magnitude(&cross);
-		
-		/* For laptop mode, we look at the Y component of the lid relative to base */
-		/* This gives us the screen's left/right rotation */
-		
-		/* Normalize lid gravity components to create proper magnitude vector */
-		s64 norm_x = ((s64)lid_gravity->x * 13000000) / (s64)lid_mag;
-		s64 norm_y = ((s64)lid_gravity->y * 13000000) / (s64)lid_mag;
-		
-		/* For laptop mode, we want the screen orientation relative to the base */
-		/* Create virtual gravity vector with expected magnitude for confidence */
-		relative_gravity.x = norm_x;
-		relative_gravity.y = norm_y;
-		/* Use a reasonable Z component to approximate total magnitude of 13M */
-		/* Since x^2 + y^2 + z^2 should equal 13M^2, estimate z */
-		s64 xy_mag_sq = norm_x * norm_x + norm_y * norm_y;
-		s64 target_mag_sq = (s64)13000000 * 13000000;
-		/* Simple approximation: if xy is small, z dominates */
-		relative_gravity.z = (xy_mag_sq < target_mag_sq / 2) ? 13000000 * 7 / 10 : 13000000 / 3;
-		
-		return orientation_update(state, config, &relative_gravity, force_update);
+		/* Laptop mode - use lid sensor directly for screen orientation */
+		/* The lid sensor gives us the screen's actual orientation relative to gravity */
+		/* In laptop mode, disable flat detection since screen is always nearly vertical */
+		struct orientation_config laptop_config = *config;
+		laptop_config.flat_threshold_deg = 0;  /* Disable flat detection in laptop mode */
+		return orientation_update(state, &laptop_config, lid_gravity, force_update);
 	}
 	else {
-		/* Intermediate angles - use hybrid approach */
-		/* For now, fall back to lid-only detection but with relaxed flat threshold */
+		/* Intermediate angles - use lid sensor with relaxed threshold */
 		return orientation_update(state, config, lid_gravity, force_update);
 	}
 }
