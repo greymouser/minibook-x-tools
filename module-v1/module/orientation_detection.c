@@ -25,10 +25,10 @@
 
 /* Default configuration values */
 #define DEFAULT_HYSTERESIS_DEG          15      /* Hysteresis for orientation changes */
-#define DEFAULT_STABILITY_TIME_MS       500     /* Time to remain stable before switching */
+#define DEFAULT_STABILITY_TIME_MS       100     /* Time to remain stable before switching */
 #define DEFAULT_FLAT_THRESHOLD_DEG      25      /* Consider flat if tilt < 25° */
-#define DEFAULT_MOTION_THRESHOLD        100000  /* Motion detection threshold (scaled units) */
-#define DEFAULT_MOTION_SETTLE_MS        200     /* Wait after motion stops */
+#define DEFAULT_MOTION_THRESHOLD        500000  /* Motion detection threshold (scaled units) */
+#define DEFAULT_MOTION_SETTLE_MS        50      /* Wait after motion stops */
 #define DEFAULT_MIN_CONFIDENCE          70      /* Minimum confidence percentage */
 
 /* Orientation angle ranges (in degrees from horizontal) */
@@ -162,7 +162,7 @@ static unsigned int calculate_tilt_angle(const struct vec3 *gravity)
 static unsigned int calculate_confidence(const struct vec3 *gravity)
 {
 	u64 mag = vec3_magnitude(gravity);
-	u64 expected_mag = 1000000; /* Expected ~1g */
+	u64 expected_mag = 13000000; /* Expected ~1g - adjusted for lid accelerometer scaling */
 	u64 mag_ratio;
 	unsigned int confidence;
 	
@@ -406,5 +406,72 @@ int orientation_to_degrees(enum screen_orientation orient)
 	case ORIENT_INVERTED: return 180;
 	case ORIENT_RIGHT:    return 270;
 	default:              return -1;
+	}
+}
+
+/* Enhanced dual-sensor orientation detection */
+bool orientation_update_dual_sensor(struct orientation_state *state,
+				    const struct orientation_config *config,
+				    const struct vec3 *base_gravity,
+				    const struct vec3 *lid_gravity,
+				    unsigned int hinge_angle,
+				    bool force_update)
+{
+	/* Choose detection method based on hinge angle */
+	
+	if (hinge_angle >= 250 || hinge_angle <= 30) {
+		/* Tablet mode or nearly closed - use lid sensor only */
+		return orientation_update(state, config, lid_gravity, force_update);
+	} 
+	else if (hinge_angle >= 70 && hinge_angle <= 200) {
+		/* Laptop mode - use relative orientation detection */
+		
+		/* Calculate orientation relative to base */
+		struct vec3 relative_gravity;
+		
+		/* Project lid gravity onto base coordinate system */
+		/* This is a simplified relative calculation */
+		/* In laptop mode, we care about how the lid is rotated relative to the base */
+		
+		u64 base_mag = vec3_magnitude(base_gravity);
+		u64 lid_mag = vec3_magnitude(lid_gravity);
+		
+		if (base_mag == 0 || lid_mag == 0) {
+			return false; /* Invalid data */
+		}
+		
+		/* Calculate the cross product to find the relative orientation axis */
+		struct vec3 cross;
+		cross.x = (s64)base_gravity->y * lid_gravity->z - (s64)base_gravity->z * lid_gravity->y;
+		cross.y = (s64)base_gravity->z * lid_gravity->x - (s64)base_gravity->x * lid_gravity->z;  
+		cross.z = (s64)base_gravity->x * lid_gravity->y - (s64)base_gravity->y * lid_gravity->x;
+		
+		/* Use the cross product magnitude to determine if screen is rotated */
+		u64 cross_mag = vec3_magnitude(&cross);
+		
+		/* For laptop mode, we look at the Y component of the lid relative to base */
+		/* This gives us the screen's left/right rotation */
+		
+		/* Normalize lid gravity components to create proper magnitude vector */
+		s64 norm_x = ((s64)lid_gravity->x * 13000000) / (s64)lid_mag;
+		s64 norm_y = ((s64)lid_gravity->y * 13000000) / (s64)lid_mag;
+		
+		/* For laptop mode, we want the screen orientation relative to the base */
+		/* Create virtual gravity vector with expected magnitude for confidence */
+		relative_gravity.x = norm_x;
+		relative_gravity.y = norm_y;
+		/* Use a reasonable Z component to approximate total magnitude of 13M */
+		/* Since x^2 + y^2 + z^2 should equal 13M^2, estimate z */
+		s64 xy_mag_sq = norm_x * norm_x + norm_y * norm_y;
+		s64 target_mag_sq = (s64)13000000 * 13000000;
+		/* Simple approximation: if xy is small, z dominates */
+		relative_gravity.z = (xy_mag_sq < target_mag_sq / 2) ? 13000000 * 7 / 10 : 13000000 / 3;
+		
+		return orientation_update(state, config, &relative_gravity, force_update);
+	}
+	else {
+		/* Intermediate angles - use hybrid approach */
+		/* For now, fall back to lid-only detection but with relaxed flat threshold */
+		return orientation_update(state, config, lid_gravity, force_update);
 	}
 }

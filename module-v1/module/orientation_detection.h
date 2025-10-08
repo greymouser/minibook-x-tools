@@ -107,6 +107,27 @@ bool orientation_update(struct orientation_state *state,
 			bool force_update);
 
 /**
+ * orientation_update_dual_sensor() - Update orientation using both base and lid sensors
+ * @state: Current orientation state
+ * @config: Configuration parameters  
+ * @base_gravity: Gravity vector from base accelerometer
+ * @lid_gravity: Gravity vector from lid accelerometer
+ * @hinge_angle: Current hinge angle in degrees (0-360)
+ * @force_update: If true, bypass stability checks
+ *
+ * Enhanced orientation detection that uses both sensors and hinge angle
+ * to determine screen orientation in various laptop positions and modes.
+ *
+ * Returns: true if orientation changed, false otherwise
+ */
+bool orientation_update_dual_sensor(struct orientation_state *state,
+				    const struct orientation_config *config,
+				    const struct vec3 *base_gravity,
+				    const struct vec3 *lid_gravity, 
+				    unsigned int hinge_angle,
+				    bool force_update);
+
+/**
  * orientation_get_angle() - Get the current screen rotation angle
  * @gravity: Current gravity vector from base accelerometer
  *

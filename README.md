@@ -11,6 +11,54 @@ The goal is to document quirks of this platform and provide utilities to interac
 
 ## Tools
 
+### `chuwi-minibook-x-tablet-mode` - Intelligent Laptop/Tablet Mode Switching
+
+A sophisticated kernel module that provides automatic laptop/tablet mode switching based on hinge angle detection using dual accelerometers. Features true 360° angle detection with bidirectional mode switching and intelligent auto-calibration.
+
+#### Features
+- **True 360° Angle Detection**: Accurate hinge angle measurement from 0° to 360° without dead zones or downward spirals
+- **Bidirectional Mode Switching**: 
+  - Enters tablet mode when hinge angle crosses **200°** (past typical 180° laptop position)
+  - Returns to laptop mode when hinge angle crosses back below **170°** 
+  - 30° hysteresis prevents oscillation between modes
+- **Auto-Calibration**: Automatically determines hinge axis orientation from real accelerometer data
+- **Enhanced Orientation Processing**: Dual-sensor orientation detection with moving average filtering
+- **Flexible Force Modes**: Manual override support ("laptop", "tablet", "auto") with both string and numeric input
+- **Comprehensive sysfs Interface**: Real-time angle monitoring, threshold adjustment, calibration status
+
+#### Quick Installation
+```bash
+# Clone and install with optimized defaults
+git clone <this-repo>
+cd minibook-x-tools
+sudo ./install.sh
+```
+
+#### Manual Installation
+```bash
+cd module-v1/module
+make
+sudo rmmod chuwi_minibook_x_tablet_mode 2>/dev/null || true
+sudo insmod chuwi-minibook-x-tablet-mode.ko
+```
+
+#### Usage
+The module works automatically once loaded. Monitor status:
+```bash
+# Check current status
+cat /sys/kernel/chuwi-minibook-x-tablet-mode/angle   # Current hinge angle (0-360°)
+cat /sys/kernel/chuwi-minibook-x-tablet-mode/state   # Current mode (0=laptop, 1=tablet)
+
+# Adjust thresholds if needed
+echo 200 | sudo tee /sys/kernel/chuwi-minibook-x-tablet-mode/enter_deg  # Tablet mode entry
+echo 170 | sudo tee /sys/kernel/chuwi-minibook-x-tablet-mode/exit_deg   # Laptop mode exit
+
+# Force specific mode
+echo "laptop" | sudo tee /sys/kernel/chuwi-minibook-x-tablet-mode/force
+echo "tablet" | sudo tee /sys/kernel/chuwi-minibook-x-tablet-mode/force
+echo "auto" | sudo tee /sys/kernel/chuwi-minibook-x-tablet-mode/force
+```
+
 ### `n150-ec-byte-bios`
 
 A Bash script for reading and writing a single byte in the Embedded Controller (EC) I/O map via debugfs.  

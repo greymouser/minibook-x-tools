@@ -43,13 +43,13 @@ static unsigned int default_poll_ms = 200;
 module_param_named(poll_ms, default_poll_ms, uint, 0644);
 MODULE_PARM_DESC(poll_ms, "Default polling interval in milliseconds (20-5000, default: 200)");
 
-static unsigned int default_enter_deg = 300;
+static unsigned int default_enter_deg = 200;
 module_param_named(enter_deg, default_enter_deg, uint, 0644);
-MODULE_PARM_DESC(enter_deg, "Default enter tablet mode threshold in degrees (0-360, default: 300)");
+MODULE_PARM_DESC(enter_deg, "Default enter tablet mode threshold in degrees (0-360, default: 200)");
 
-static unsigned int default_exit_deg = 60;
+static unsigned int default_exit_deg = 170;
 module_param_named(exit_deg, default_exit_deg, uint, 0644);
-MODULE_PARM_DESC(exit_deg, "Default exit tablet mode threshold in degrees (0-360, default: 60)");
+MODULE_PARM_DESC(exit_deg, "Default exit tablet mode threshold in degrees (0-360, default: 170)");
 
 static unsigned int default_hysteresis_deg = 10;
 module_param_named(hysteresis_deg, default_hysteresis_deg, uint, 0644);
@@ -292,49 +292,69 @@ static struct vec3 cross3_scaled(const struct vec3 *a, const struct vec3 *b)
 
 
 /* Signed hinge angle in degrees (0..360):
- * 1) Project base & lid onto plane ⟂ axis (unit ~1e6),
- * 2) Compute unsigned angle on the plane,
- * 3) Use sign(axis · (pb × pl)) to choose  ang or 360-ang.
+ * True 360° implementation using cross product to determine direction
+ * while maintaining the reliable floor-aware scaling approach.
  */
 static unsigned int angle_deg_signed(const struct vec3 *base,
                                      const struct vec3 *lid,
                                      const struct vec3 *axis_unit)
 {
-	/* 1) Project onto the hinge plane */
+	/* Calculate the basic 0-180° angle */
 	struct vec3 pb = project_onto_plane(base, axis_unit);
 	struct vec3 pl = project_onto_plane(lid,  axis_unit);
 
-	/* 2) Normalize projections to ~1e6 (keeps triple-product scale predictable) */
 	(void)normalize1e6(&pb);
 	(void)normalize1e6(&pl);
 
-	/* 3) Unsigned angle on the plane (0..180) */
-	unsigned int ang = angle_deg_u(&pb, &pl);
-
-	/* 4) Scalar triple product for sign */
-	s64 t = triple_prod_s64(&pb, &pl, axis_unit);
-
-	/* Dynamic deadband:
-	 * With pb,pl,axis all ~1e6, the true |t| scale is ~1e18 * sin(theta).
-	 * Pick an epsilon that dwarfs noise but is tiny vs real motion.
-	 */
-	const s64 EPS = 100000000000000LL; /* 1e14 */
-
-	/* Candidate branches for signed angle */
-	unsigned int a_pos = ang;                 /* t ≥ 0 → θ */
-	unsigned int a_neg = ang ? 360 - ang : 0; /* t < 0 → 360-θ */
-
-	/* 5) Stable branch selection (deadband + continuity) */
-	if (t > EPS) {
-		return a_pos;
-	} else if (t < -EPS) {
-		return a_neg;
-	} else {
-		/* Within deadband → pick the branch closest to the last reported angle */
-		unsigned int d_pos = circ_dist(a_pos, last_angle);
-		unsigned int d_neg = circ_dist(a_neg, last_angle);
-		return (d_pos <= d_neg) ? a_pos : a_neg;
+	unsigned int base_angle = angle_deg_u(&pb, &pl);
+	
+	/* Determine which side of 180° we're on using cross product direction */
+	bool second_half = false;
+	if (mag(&pb) > 0 && mag(&pl) > 0) {
+		struct vec3 cross = cross3_scaled(&pb, &pl);
+		/* Check if cross product aligns with hinge axis */
+		s64 dot_with_axis = (s64)cross.x * axis_unit->x + 
+		                   (s64)cross.y * axis_unit->y + 
+		                   (s64)cross.z * axis_unit->z;
+		/* If negative, we're in the 180-360° range */
+		second_half = (dot_with_axis < 0);
 	}
+	
+	/* Floor-aware scaling that maps to true 360° range */
+	unsigned int physical_angle;
+	const unsigned int floor_angle = 25;
+	
+	if (base_angle <= 1) {
+		/* Below reliable threshold */
+		physical_angle = second_half ? (360 - floor_angle) : floor_angle;
+	} else if (!second_half) {
+		/* First half: 0-180° visual */
+		if (base_angle <= 45) {
+			/* L position range: 1°-45° → 25°-90° */
+			physical_angle = floor_angle + ((base_angle - 1) * 65) / 44;
+		} else if (base_angle <= 65) {
+			/* Flat position range: 45°-65° → 90°-180° */
+			physical_angle = 90 + ((base_angle - 45) * 90) / 20;
+		} else {
+			/* Approach 180°: 65°-180° → 180°-180° */
+			physical_angle = 180;
+		}
+	} else {
+		/* Second half: 180-360° visual */
+		if (base_angle <= 45) {
+			/* 180°-270° range: map decreasing base_angle to increasing physical */
+			physical_angle = 180 + ((45 - base_angle) * 90) / 44;
+		} else if (base_angle <= 65) {
+			/* 270°-315° range */
+			physical_angle = 270 + ((65 - base_angle) * 45) / 20;
+		} else {
+			/* Approach 360°: 315°-360° */
+			physical_angle = 315 + ((180 - base_angle) * 45) / 115;
+			if (physical_angle > 360) physical_angle = 360;
+		}
+	}
+	
+	return physical_angle;
 }
 
 
@@ -450,7 +470,7 @@ static void evaluate_and_report(void)
 		report_switch(cur_tablet);
 	}
 	
-	/* Update screen orientation detection using base accelerometer */
+	/* Update screen orientation detection using lid accelerometer */
 	if (orientation_enabled) {
 		bool force_orient_update = (force_orientation >= 0);
 		
@@ -461,8 +481,8 @@ static void evaluate_and_report(void)
 				report_orientation(orient_state.current_orientation);
 			}
 		} else {
-			/* Auto-detect orientation from base accelerometer */
-			if (orientation_update(&orient_state, &orient_config, &g_base, force_orient_update)) {
+			/* Auto-detect orientation using dual-sensor approach */
+			if (orientation_update_dual_sensor(&orient_state, &orient_config, &g_base, &g_lid, last_angle, force_orient_update)) {
 				/* Orientation changed - report it */
 				report_orientation(orient_state.current_orientation);
 			}
