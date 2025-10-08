@@ -1,17 +1,26 @@
 // SPDX-License-Identifier: GPL-2.0
-/* chuwi-minibook-x-tablet-mode: simple hinge-angle → SW_TABLET_MODE helper
+/**
+ * chuwi-minibook-x-tablet-mode - Hinge angle tablet mode detection driver
  *
- * Design:
- *  - Kernel module registers an input switch device (SW_TABLET_MODE).
- *  - Maintains two gravity vectors (base & lid) provided via sysfs.
- *  - Computes unsigned (0..180) or signed (0..360) hinge angle; applies hysteresis.
- *  - Exposes sysfs knobs: enter/exit thresholds, hysteresis, poll, force, state, angle,
- *    raw vectors, enable, signed_mode, hinge_axis (unit), one-shot calibration.
+ * This kernel module provides tablet mode switching and screen orientation
+ * detection for the Chuwi Minibook X convertible laptop. It uses dual
+ * accelerometer data to compute hinge angles and screen orientations.
  *
- * v1 feeds vectors from two MXC4005 IIO devices via a userspace helper.
- * v2 can replace the feeder by reading IIO directly in-kernel.
+ * Features:
+ * - SW_TABLET_MODE input device for laptop/tablet mode switching  
+ * - Screen orientation detection with standard Linux input events
+ * - Configurable thresholds and hysteresis via sysfs
+ * - Auto-calibration of hinge axis from accelerometer data
+ * - Motion detection to prevent spurious switches
+ * - Comprehensive debugfs interface when enabled
  *
- * Later extension: bind to ACPI HID "MDA6655" and read IIO directly.
+ * The module receives gravity vector data from two accelerometers via sysfs:
+ * - Base accelerometer (in laptop keyboard section) 
+ * - Lid accelerometer (in screen section)
+ *
+ * From these vectors, it computes:
+ * - Hinge angle for tablet mode detection
+ * - Screen orientation for automatic rotation
  *
  * Copyright (c) 2025 Armando DiCianno <armando@noonshy.com>
  */
@@ -63,54 +72,107 @@ static bool default_enabled = true;
 module_param_named(enabled, default_enabled, bool, 0644);
 MODULE_PARM_DESC(enabled, "Default polling enabled state (default: 1)");
 
+/*
+ * Global state variables
+ */
+
+/** @tm_input: Input device for tablet mode and orientation events */
 static struct input_dev *tm_input;
+
+/** @tm_kobj: Sysfs kobject for module configuration */
 static struct kobject *tm_kobj;
+
+/** @tm_lock: Mutex protecting global state during operations */
 static DEFINE_MUTEX(tm_lock);
 
 #ifdef CONFIG_CHUWI_MINIBOOK_X_TABLET_MODE_DEBUGFS
-/* Debugfs support */
+/** @debugfs_root: Root debugfs directory */
 static struct dentry *debugfs_root;
+/** @debugfs_raw_data: Debugfs entry for raw accelerometer data */
 static struct dentry *debugfs_raw_data;
+/** @debugfs_calculations: Debugfs entry for angle calculations */
 static struct dentry *debugfs_calculations;
 #endif
 
-/* Power management */
+/** @tm_pdev: Platform device for power management */
 static struct platform_device *tm_pdev;
+/** @was_enabled_before_suspend: State preservation during suspend/resume */
 static bool was_enabled_before_suspend;
 
-/* Last known gravity vectors (scaled ~1e6 for fixed-point ops). */
+/*
+ * Accelerometer state
+ */
 
-/* Reasonable defaults: base “down”, lid “up” */
+/** @g_base: Current gravity vector from base accelerometer (laptop keyboard) */
 static struct vec3 g_base = { 0, 0, 1000000 };
+
+/** @g_lid: Current gravity vector from lid accelerometer (screen) */
 static struct vec3 g_lid = { 0, 0, -1000000 };
 
-static int enabled = 1;			/* polling enabled */
-static int force_tablet = -1;		/* -1=auto, 0=force laptop, 1=force tablet */
-static unsigned int poll_ms = 200;	/* polling period (ms) */
+/*
+ * Tablet mode configuration and state  
+ */
 
-/* Signed-mode defaults (0..360): enter high, exit low */
-static unsigned int enter_deg = 300;	/* ≥ this → enter tablet */
-static unsigned int exit_deg = 60;	/* ≤ this → exit tablet */
-static unsigned int hysteresis_deg = 10; /* extra guard, degrees */
+/** @enabled: Whether polling is currently enabled */
+static int enabled = 1;
 
-static int cur_tablet = 0;		/* current switch state */
-static unsigned int last_angle = 0;	/* last computed angle (deg) */
+/** @force_tablet: Force tablet mode (-1=auto, 0=laptop, 1=tablet) */
+static int force_tablet = -1;
+
+/** @poll_ms: Polling interval in milliseconds */
+static unsigned int poll_ms = 200;
+
+/** @enter_deg: Hinge angle threshold to enter tablet mode */
+static unsigned int enter_deg = 300;
+
+/** @exit_deg: Hinge angle threshold to exit tablet mode */
+static unsigned int exit_deg = 60;
+
+/** @hysteresis_deg: Hysteresis guard angle in degrees */
+static unsigned int hysteresis_deg = 10;
+
+/** @cur_tablet: Current tablet mode state (0=laptop, 1=tablet) */
+static int cur_tablet = 0;
+
+/** @last_angle: Last computed hinge angle in degrees */
+static unsigned int last_angle = 0;
 
 /*
- * Signed-angle mode & hinge axis (unit vector ~1e6).
- * Default axis along +Y (common hinge direction).
+ * Hinge angle calculation parameters
  */
-static int signed_mode = 1;			/* 1=use 0..360 signed angle */
+
+/** @signed_mode: Use signed angle mode (0=0-180°, 1=0-360°) */
+static int signed_mode = 1;
+
+/** @hinge_axis_unit: Unit vector representing hinge rotation axis */
 static struct vec3 hinge_axis_unit = { 0, 1000000, 0 };
 
+/** @poll_work: Delayed work queue for periodic polling */
 static struct delayed_work poll_work;
 
-/* Orientation detection state */
+/*
+ * Screen orientation detection
+ */
+
+/** @orient_config: Configuration for orientation detection algorithm */
 static struct orientation_config orient_config;
+
+/** @orient_state: Current state of orientation detection */
 static struct orientation_state orient_state;
+
+/** @orientation_enabled: Whether orientation detection is enabled */
 static int orientation_enabled = 1;
-static int force_orientation = -1; /* -1=auto, 0-3=force specific orientation */
-static bool auto_calibration_done = false; /* Track if we've done initial calibration */
+
+/** @force_orientation: Force orientation (-1=auto, 0-3=specific) */
+static int force_orientation = -1;
+
+/** @auto_calibration_done: Whether initial hinge axis calibration completed */
+static bool auto_calibration_done = false;
+
+/**
+ * Module initialization and utility functions
+ */
+
 
 /* Initialize default values from module parameters */
 static void init_module_defaults(void)
@@ -192,15 +254,14 @@ static int normalize1e6(struct vec3 *v)
 	return 1;
 }
 
-/* circular distance between angles in degrees [0..360) */
-static unsigned int circ_dist(unsigned int a, unsigned int b)
-{
-	unsigned int d = (a > b) ? (a - b) : (b - a);
-	return min(d, 360u - d);
-}
-
-/* Project v onto plane orthogonal to unit axis au (|au| ≈ 1e6).
- * v_proj = v - au * (dot(v,au)/|au|^2); since |au|^2 ≈ 1e12, divide by 1e12.
+/**
+ * project_onto_plane - Project vector onto plane orthogonal to unit axis
+ * @v: Vector to project
+ * @au: Unit axis vector (magnitude ~1e6)
+ * 
+ * Projects v onto plane orthogonal to unit axis au using formula:
+ * v_proj = v - au * (dot(v,au)/|au|^2)
+ * Since |au|^2 ≈ 1e12, we divide by 1e12.
  */
 static struct vec3 project_onto_plane(const struct vec3 *v, const struct vec3 *au)
 {
@@ -222,7 +283,17 @@ static struct vec3 project_onto_plane(const struct vec3 *v, const struct vec3 *a
 	return r;
 }
 
-/* Unsigned angle in degrees (0..180) between vectors a and b. */
+/**
+ * angle_deg_u - Calculate unsigned angle between two vectors in degrees
+ * @a: First vector
+ * @b: Second vector
+ *
+ * Computes the unsigned angle (0-180°) between two 3D vectors using
+ * dot product and approximate inverse cosine. Uses fixed-point arithmetic
+ * scaled by 1e6 to avoid floating point operations in kernel space.
+ *
+ * Return: Angle in degrees (0-180)
+ */
 static unsigned int angle_deg_u(const struct vec3 *a, const struct vec3 *b)
 {
 	s64 dot = dot3(a, b);
@@ -251,17 +322,6 @@ static unsigned int angle_deg_u(const struct vec3 *a, const struct vec3 *b)
 	if (deg < 0) deg = 0;
 	if (deg > 180) deg = 180;
 	return (unsigned int)deg;
-}
-
-/* Scalar triple product: axis · (a × b) in s64.
- * Used for signed angle direction without constructing a cross in s32.
- */
-static s64 triple_prod_s64(const struct vec3 *a, const struct vec3 *b, const struct vec3 *axis)
-{
-	s64 cx = (s64)a->y * b->z - (s64)a->z * b->y;
-	s64 cy = (s64)a->z * b->x - (s64)a->x * b->z;
-	s64 cz = (s64)a->x * b->y - (s64)a->y * b->x;
-	return (s64)axis->x * cx + (s64)axis->y * cy + (s64)axis->z * cz;
 }
 
 /* Cross product computed in s64 then scaled down to s32 safely.
@@ -392,6 +452,13 @@ static void report_orientation(enum screen_orientation orient)
 	}
 }
 
+/**
+ * evaluate_and_report() - Core module evaluation function
+ *
+ * Performs tablet mode detection and screen orientation analysis based on
+ * accelerometer data from both base and lid sensors. Handles auto-calibration,
+ * state transitions, and input event reporting.
+ */
 static void evaluate_and_report(void)
 {
 	int new_state;
@@ -490,6 +557,14 @@ static void evaluate_and_report(void)
 	}
 }
 
+/**
+ * poll_work_fn() - Polling mechanism work handler
+ * @w: Work struct (unused)
+ *
+ * Periodic work handler that reads accelerometer data and evaluates tablet
+ * mode state and screen orientation. Reschedules itself based on poll_ms
+ * interval when module is enabled.
+ */
 static void poll_work_fn(struct work_struct *w)
 {
 	mutex_lock(&tm_lock);
@@ -502,7 +577,38 @@ static void poll_work_fn(struct work_struct *w)
 
 
 #ifdef CONFIG_CHUWI_MINIBOOK_X_TABLET_MODE_DEBUGFS
-/* ------------------------- Debugfs ------------------------- */
+/**
+ * Debugfs interface for detailed module state inspection
+ */
+
+/**
+ * triple_prod_s64 - Calculate scalar triple product for signed angle direction
+ * @a: First vector  
+ * @b: Second vector
+ * @axis: Axis vector (determines sign)
+ *
+ * Computes axis · (a × b) to determine the direction of rotation for
+ * signed angle calculations. Avoids constructing the full cross product
+ * by computing the scalar triple product directly in 64-bit arithmetic.
+ *
+ * Return: Scalar triple product (positive/negative indicates direction)
+ */
+static s64 triple_prod_s64(const struct vec3 *a, const struct vec3 *b, const struct vec3 *axis)
+{
+	s64 cx = (s64)a->y * b->z - (s64)a->z * b->y;
+	s64 cy = (s64)a->z * b->x - (s64)a->x * b->z;
+	s64 cz = (s64)a->x * b->y - (s64)a->y * b->x;
+	return (s64)axis->x * cx + (s64)axis->y * cy + (s64)axis->z * cz;
+}
+
+/**
+ * debugfs_raw_data_show - Display raw sensor data and current state
+ * @s: seq_file for output
+ * @unused: Unused parameter
+ *
+ * Shows raw accelerometer vectors, magnitudes, computed values, and
+ * current module state for debugging sensor data quality and calibration.
+ */
 
 static int debugfs_raw_data_show(struct seq_file *s, void *unused)
 {
@@ -527,18 +633,42 @@ static int debugfs_raw_data_show(struct seq_file *s, void *unused)
 	seq_printf(s, "  Hinge axis:     [%8d, %8d, %8d] (mag: %llu)\n",
 		   hinge_axis_unit.x, hinge_axis_unit.y, hinge_axis_unit.z, axis_mag);
 	seq_printf(s, "  Base•Lid dot:   %lld\n", base_lid_dot);
-	seq_printf(s, "\nCurrent State:\n");
-	seq_printf(s, "  Tablet mode:    %s\n", cur_tablet ? "yes" : "no");
+	seq_printf(s, "\nTablet Mode State:\n");
+	seq_printf(s, "  Current mode:   %s (%d)\n", cur_tablet ? "tablet" : "laptop", cur_tablet);
 	seq_printf(s, "  Last angle:     %u degrees\n", last_angle);
-	seq_printf(s, "  Polling:        %s\n", enabled ? "enabled" : "disabled");
-	seq_printf(s, "  Force mode:     %s\n",
+	seq_printf(s, "  Force mode:     %s (%d)\n",
 		   force_tablet == -1 ? "auto" :
-		   force_tablet == 0 ? "laptop" : "tablet");
+		   force_tablet == 0 ? "laptop" : "tablet", force_tablet);
+	seq_printf(s, "  Enter threshold: %u degrees\n", enter_deg);
+	seq_printf(s, "  Exit threshold:  %u degrees\n", exit_deg);
+	seq_printf(s, "  Hysteresis:     %u degrees\n", hysteresis_deg);
+	seq_printf(s, "\nOrientation State:\n");
+	seq_printf(s, "  Current:        %s\n", orientation_to_string(orient_state.current_orientation));
+	seq_printf(s, "  Enabled:        %s\n", orientation_enabled ? "yes" : "no");
+	seq_printf(s, "  Force mode:     %s (%d)\n",
+		   force_orientation == -1 ? "auto" :
+		   orientation_to_string((enum screen_orientation)force_orientation), force_orientation);
+	seq_printf(s, "  Changes:        %lu\n", orient_state.orientation_changes);
+	seq_printf(s, "  Rejected:       %lu\n", orient_state.rejected_changes);
+	seq_printf(s, "  Confidence:     %u%%\n", orient_state.confidence);
+	seq_printf(s, "\nModule State:\n");
+	seq_printf(s, "  Polling:        %s (%dms)\n", enabled ? "enabled" : "disabled", poll_ms);
+	seq_printf(s, "  Signed mode:    %s\n", signed_mode ? "yes" : "no");
+	seq_printf(s, "  Auto-calibrated: %s\n", auto_calibration_done ? "yes" : "no");
 
 	mutex_unlock(&tm_lock);
 	return 0;
 }
 
+/**
+ * debugfs_calculations_show - Display detailed angle calculations and logic
+ * @s: seq_file for output 
+ * @unused: Unused parameter
+ *
+ * Shows step-by-step angle calculations, threshold comparisons, and
+ * decision logic for tablet mode switching. Useful for debugging
+ * threshold settings and understanding switching behavior.
+ */
 static int debugfs_calculations_show(struct seq_file *s, void *unused)
 {
 	struct vec3 axis, pb, pl;
@@ -677,21 +807,61 @@ static struct platform_driver tm_driver = {
 	},
 };
 
-static ssize_t show_state(struct kobject *k, struct kobj_attribute *a, char *buf)
+/**
+ * Sysfs interface functions
+ */
+
+/**
+ * show_tablet_state() - Display current tablet mode state
+ * @k: Kobject (unused)
+ * @a: Attribute (unused)
+ * @buf: Output buffer
+ *
+ * Returns: Number of bytes written to buffer
+ */
+static ssize_t show_tablet_state(struct kobject *k, struct kobj_attribute *a, char *buf)
 {
 	return scnprintf(buf, PAGE_SIZE, "%d\n", cur_tablet);
 }
 
-static ssize_t show_angle(struct kobject *k, struct kobj_attribute *a, char *buf)
+/**
+ * show_tablet_angle() - Display current hinge angle
+ * @k: Kobject (unused)
+ * @a: Attribute (unused)
+ * @buf: Output buffer
+ *
+ * Returns: Number of bytes written to buffer
+ */
+static ssize_t show_tablet_angle(struct kobject *k, struct kobj_attribute *a, char *buf)
 {
 	return scnprintf(buf, PAGE_SIZE, "%u\n", last_angle);
 }
 
+/**
+ * show_enable() - Display module enabled state
+ * @k: Kobject (unused)
+ * @a: Attribute (unused)
+ * @buf: Output buffer
+ *
+ * Returns: Number of bytes written to buffer
+ */
 static ssize_t show_enable(struct kobject *k, struct kobj_attribute *a, char *buf)
 {
 	return scnprintf(buf, PAGE_SIZE, "%d\n", enabled);
 }
 
+/**
+ * store_enable() - Enable/disable module operation
+ * @k: Kobject (unused)
+ * @a: Attribute (unused)
+ * @b: Input buffer
+ * @l: Buffer length
+ *
+ * Controls whether the module actively polls accelerometer data and
+ * reports tablet mode state changes.
+ *
+ * Returns: Buffer length on success, negative error code on failure
+ */
 static ssize_t store_enable(struct kobject *k, struct kobj_attribute *a,
 			     const char *b, size_t l)
 {
@@ -708,7 +878,7 @@ static ssize_t store_enable(struct kobject *k, struct kobj_attribute *a,
 	return l;
 }
 
-static ssize_t show_force(struct kobject *k, struct kobj_attribute *a, char *buf)
+static ssize_t show_tablet_force(struct kobject *k, struct kobj_attribute *a, char *buf)
 {
 	const char *mode_str;
 	
@@ -722,7 +892,7 @@ static ssize_t show_force(struct kobject *k, struct kobj_attribute *a, char *buf
 	return scnprintf(buf, PAGE_SIZE, "%d (%s)\n", force_tablet, mode_str);
 }
 
-static ssize_t store_force(struct kobject *k, struct kobj_attribute *a,
+static ssize_t store_tablet_force(struct kobject *k, struct kobj_attribute *a,
 			   const char *b, size_t l)
 {
 	int v;
@@ -767,11 +937,11 @@ static struct kobj_attribute name##_attr = __ATTR(name, 0644, show_##name, store
 static struct kobj_attribute name##_attr = __ATTR(name, 0444, show_##name, NULL)
 
 /* thresholds */
-static ssize_t show_enter_deg(struct kobject *k, struct kobj_attribute *a, char *buf)
+static ssize_t show_tablet_enter_deg(struct kobject *k, struct kobj_attribute *a, char *buf)
 {
 	return scnprintf(buf, PAGE_SIZE, "%u\n", enter_deg);
 }
-static ssize_t store_enter_deg(struct kobject *k, struct kobj_attribute *a,
+static ssize_t store_tablet_enter_deg(struct kobject *k, struct kobj_attribute *a,
 				const char *b, size_t l)
 {
 	unsigned int v;
@@ -788,12 +958,12 @@ static ssize_t store_enter_deg(struct kobject *k, struct kobj_attribute *a,
 	return l;
 }
 
-static ssize_t show_exit_deg(struct kobject *k, struct kobj_attribute *a, char *buf)
+static ssize_t show_tablet_exit_deg(struct kobject *k, struct kobj_attribute *a, char *buf)
 {
 	return scnprintf(buf, PAGE_SIZE, "%u\n", exit_deg);
 }
 
-static ssize_t store_exit_deg(struct kobject *k, struct kobj_attribute *a,
+static ssize_t store_tablet_exit_deg(struct kobject *k, struct kobj_attribute *a,
 			      const char *b, size_t l)
 {
 	unsigned int v;
@@ -810,12 +980,12 @@ static ssize_t store_exit_deg(struct kobject *k, struct kobj_attribute *a,
 	return l;
 }
 
-static ssize_t show_hysteresis_deg(struct kobject *k, struct kobj_attribute *a, char *buf)
+static ssize_t show_tablet_hysteresis_deg(struct kobject *k, struct kobj_attribute *a, char *buf)
 {
 	return scnprintf(buf, PAGE_SIZE, "%u\n", hysteresis_deg);
 }
 
-static ssize_t store_hysteresis_deg(struct kobject *k, struct kobj_attribute *a,
+static ssize_t store_tablet_hysteresis_deg(struct kobject *k, struct kobj_attribute *a,
 				    const char *b, size_t l)
 {
 	unsigned int v;
@@ -989,13 +1159,13 @@ static ssize_t store_lid_vec(struct kobject *k, struct kobj_attribute *a,
 }
 
 /* Attribute declarations & group */
-DEF_ATTR_RO(state);
-DEF_ATTR_RO(angle);
+DEF_ATTR_RO(tablet_state);
+DEF_ATTR_RO(tablet_angle);
 DEF_ATTR_RW(enable);
-DEF_ATTR_RW(force);
-DEF_ATTR_RW(enter_deg);
-DEF_ATTR_RW(exit_deg);
-DEF_ATTR_RW(hysteresis_deg);
+DEF_ATTR_RW(tablet_force);
+DEF_ATTR_RW(tablet_enter_deg);
+DEF_ATTR_RW(tablet_exit_deg);
+DEF_ATTR_RW(tablet_hysteresis_deg);
 DEF_ATTR_RW(poll_ms);
 DEF_ATTR_RW(base_vec);
 DEF_ATTR_RW(lid_vec);
@@ -1121,13 +1291,13 @@ static struct kobj_attribute orientation_stats_attr =
 	__ATTR(orientation_stats, 0444, show_orientation_stats, NULL);
 
 static struct attribute *tm_attrs[] = {
-	&state_attr.attr,
-	&angle_attr.attr,
+	&tablet_state_attr.attr,
+	&tablet_angle_attr.attr,
 	&enable_attr.attr,
-	&force_attr.attr,
-	&enter_deg_attr.attr,
-	&exit_deg_attr.attr,
-	&hysteresis_deg_attr.attr,
+	&tablet_force_attr.attr,
+	&tablet_enter_deg_attr.attr,
+	&tablet_exit_deg_attr.attr,
+	&tablet_hysteresis_deg_attr.attr,
 	&poll_ms_attr.attr,
 	&base_vec_attr.attr,
 	&lid_vec_attr.attr,
@@ -1145,8 +1315,18 @@ static struct attribute *tm_attrs[] = {
 };
 ATTRIBUTE_GROUPS(tm);
 
-/* ------------------------- Init / Exit ------------------------- */
+/**
+ * Module initialization and cleanup
+ */
 
+/**
+ * tm_init() - Module initialization function
+ *
+ * Initializes the tablet mode module, sets up platform driver, creates
+ * sysfs interface, initializes input devices, and starts polling mechanism.
+ *
+ * Returns: 0 on success, negative error code on failure
+ */
 static int __init tm_init(void)
 {
 	int err;
@@ -1253,6 +1433,12 @@ err_driver:
 	return err;
 }
 
+/**
+ * tm_exit() - Module cleanup function
+ *
+ * Cancels all pending work, removes debugfs interface, cleans up sysfs
+ * interface, unregisters input devices, and platform driver.
+ */
 static void __exit tm_exit(void)
 {
 	cancel_delayed_work_sync(&poll_work);
