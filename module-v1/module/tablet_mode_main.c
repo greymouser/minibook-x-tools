@@ -676,18 +676,64 @@ static ssize_t store_enable(struct kobject *k, struct kobj_attribute *a,
 
 static ssize_t show_force(struct kobject *k, struct kobj_attribute *a, char *buf)
 {
-	return scnprintf(buf, PAGE_SIZE, "%d\n", force_tablet);
+	const char *mode_str;
+	
+	switch (force_tablet) {
+		case -1: mode_str = "auto"; break;
+		case 0:  mode_str = "laptop"; break;
+		case 1:  mode_str = "tablet"; break;
+		default: mode_str = "unknown"; break;
+	}
+	
+	return scnprintf(buf, PAGE_SIZE, "%d (%s)\n", force_tablet, mode_str);
+}
+
+/* Simple case-insensitive string comparison for kernel space */
+static int kernel_strcasecmp(const char *s1, const char *s2)
+{
+	unsigned char c1, c2;
+	
+	do {
+		c1 = *s1++;
+		c2 = *s2++;
+		if (c1 >= 'A' && c1 <= 'Z')
+			c1 += 'a' - 'A';
+		if (c2 >= 'A' && c2 <= 'Z')
+			c2 += 'a' - 'A';
+	} while (c1 && c1 == c2);
+	
+	return c1 - c2;
 }
 
 static ssize_t store_force(struct kobject *k, struct kobj_attribute *a,
 			   const char *b, size_t l)
 {
 	int v;
-
-	if (kstrtoint(b, 0, &v))
+	char input[16];
+	
+	/* Copy input and remove newline */
+	if (l >= sizeof(input))
 		return -EINVAL;
-	if (v < -1 || v > 1)
-		return -ERANGE;
+		
+	strncpy(input, b, sizeof(input) - 1);
+	input[sizeof(input) - 1] = '\0';
+	if (strlen(input) > 0 && input[strlen(input) - 1] == '\n')
+		input[strlen(input) - 1] = '\0';
+
+	/* Try string parsing first */
+	if (kernel_strcasecmp(input, "laptop") == 0) {
+		v = 0;
+	} else if (kernel_strcasecmp(input, "tablet") == 0) {
+		v = 1;
+	} else if (kernel_strcasecmp(input, "auto") == 0) {
+		v = -1;
+	} else {
+		/* Fall back to numeric parsing */
+		if (kstrtoint(b, 0, &v))
+			return -EINVAL;
+		if (v < -1 || v > 1)
+			return -ERANGE;
+	}
 
 	mutex_lock(&tm_lock);
 	force_tablet = v;
