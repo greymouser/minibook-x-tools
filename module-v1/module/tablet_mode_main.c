@@ -109,6 +109,7 @@ static struct orientation_config orient_config;
 static struct orientation_state orient_state;
 static int orientation_enabled = 1;
 static int force_orientation = -1; /* -1=auto, 0-3=force specific orientation */
+static bool auto_calibration_done = false; /* Track if we've done initial calibration */
 
 /* Initialize default values from module parameters */
 static void init_module_defaults(void)
@@ -374,6 +375,18 @@ static void evaluate_and_report(void)
 {
 	int new_state;
 	unsigned int a;
+
+	/* Perform auto-calibration on first real accelerometer data */
+	if (!auto_calibration_done && (g_base.x != 0 || g_base.y != 0 || g_lid.x != 0 || g_lid.y != 0)) {
+		/* We have non-default accelerometer data, attempt auto-calibration */
+		struct vec3 ax = cross3_scaled(&g_base, &g_lid);
+		if (normalize1e6(&ax)) {
+			hinge_axis_unit = ax;
+			auto_calibration_done = true;
+			pr_info(DRV_NAME ": auto-calibrated hinge axis to [%d %d %d] from real accelerometer data\n",
+				hinge_axis_unit.x, hinge_axis_unit.y, hinge_axis_unit.z);
+		}
+	}
 
 	if (signed_mode) {
 		/* Ensure hinge axis is sensible; default +Y if bad. */
@@ -885,13 +898,20 @@ static ssize_t store_calibrate_signed(struct kobject *k, struct kobj_attribute *
 			return -EINVAL;
 		}
 		hinge_axis_unit = ax;
+		auto_calibration_done = true; /* Mark as manually calibrated */
 		mutex_unlock(&tm_lock);
 
-		pr_info(DRV_NAME ": calibrated hinge axis to [%d %d %d]\n",
+		pr_info(DRV_NAME ": manually calibrated hinge axis to [%d %d %d]\n",
 			hinge_axis_unit.x, hinge_axis_unit.y, hinge_axis_unit.z);
 		schedule_delayed_work(&poll_work, 0);
 	}
 	return l;
+}
+
+/* Auto-calibration status */
+static ssize_t show_auto_calibration_status(struct kobject *k, struct kobj_attribute *a, char *buf)
+{
+	return scnprintf(buf, PAGE_SIZE, "%s\n", auto_calibration_done ? "done" : "pending");
 }
 
 /* poll interval */
@@ -981,6 +1001,8 @@ static struct kobj_attribute hinge_axis_attr =
 	__ATTR(hinge_axis, 0644, show_hinge_axis, store_hinge_axis);
 static struct kobj_attribute calibrate_signed_attr =
 	__ATTR(calibrate_signed, 0200, NULL, store_calibrate_signed);
+static struct kobj_attribute auto_calibration_status_attr =
+	__ATTR(auto_calibration_status, 0444, show_auto_calibration_status, NULL);
 
 /* ------------------------- Orientation sysfs ------------------------- */
 
@@ -1108,6 +1130,7 @@ static struct attribute *tm_attrs[] = {
 	&signed_mode_attr.attr,
 	&hinge_axis_attr.attr,
 	&calibrate_signed_attr.attr,
+	&auto_calibration_status_attr.attr,
 	&orientation_attr.attr,
 	&orientation_degrees_attr.attr,
 	&orientation_enabled_attr.attr,
@@ -1213,8 +1236,9 @@ static int __init tm_init(void)
 	if (enabled)
 		schedule_delayed_work(&poll_work, msecs_to_jiffies(poll_ms));
 
-	pr_info(DRV_NAME ": loaded (enter=%u exit=%u poll=%ums signed=%d enabled=%d)\n",
-		enter_deg, exit_deg, poll_ms, signed_mode, enabled);
+	pr_info(DRV_NAME ": loaded (enter=%u exit=%u poll=%ums signed=%d enabled=%d) - auto-calibration: %s\n",
+		enter_deg, exit_deg, poll_ms, signed_mode, enabled, 
+		auto_calibration_done ? "done" : "pending first accelerometer data");
 	return 0;
 
 err_kobj:
