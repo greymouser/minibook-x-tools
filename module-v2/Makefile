@@ -41,6 +41,33 @@ install: all
 	@echo "✓ Module installed successfully!"
 	@echo "Check status with: lsmod | grep chuwi"
 
+load: all
+	@echo "Loading Chuwi Minibook X module with modprobe..."
+	@echo "Copying fresh module to system path..."
+	sudo mkdir -p /lib/modules/$(shell uname -r)/extra/
+	sudo cp chuwi-minibook-x.ko /lib/modules/$(shell uname -r)/extra/
+	sudo depmod -a
+	@echo "Loading dependencies..."
+	-sudo modprobe mxc4005
+	-sudo modprobe serial_multi_instantiate
+	@echo "Loading main module..."
+	sudo modprobe chuwi_minibook_x
+	@echo "✓ Module loaded with dependencies!"
+	@echo "Status: $$(lsmod | grep chuwi_minibook_x || echo 'not loaded')"
+	@echo "Dependencies: $$(lsmod | grep -E '(mxc4005|serial_multi)' | wc -l) modules"
+
+unload:
+	@echo "Unloading Chuwi Minibook X module and dependencies..."
+	-sudo modprobe -r chuwi_minibook_x
+	-sudo modprobe -r mxc4005
+	@if [ -f /lib/modules/$(shell uname -r)/extra/chuwi-minibook-x.ko ]; then \
+		echo "Removing temporary module from system path..."; \
+		sudo rm -f /lib/modules/$(shell uname -r)/extra/chuwi-minibook-x.ko; \
+		sudo depmod -a; \
+	fi
+	@echo "✓ Module and dependencies unloaded!"
+	@echo "Status: $$(lsmod | grep -E '(chuwi_minibook_x|mxc4005)' | wc -l) modules remain"
+
 modules_install: install
 
 help:
@@ -50,6 +77,8 @@ help:
 	@echo "  all              - Build the module"
 	@echo "  clean            - Clean build artifacts"
 	@echo "  install          - Install module to system (with dependencies)"
+	@echo "  load             - Load module with modprobe (handles dependencies)"
+	@echo "  unload           - Unload module and dependencies with modprobe -r"
 	@echo "  modules_install  - Alias for install"
 	@echo "  help             - Show this help"
 	@echo ""
@@ -57,7 +86,7 @@ help:
 	@echo "Note: This module is designed for eventual in-tree integration"
 	@echo "      with proper CONFIG_CHUWI_MINIBOOK_X support."
 
-.PHONY: all clean install modules_install help
+.PHONY: all clean install load unload modules_install help
 
 else
     # In-tree kernel build - production mode
