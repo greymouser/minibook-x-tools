@@ -169,6 +169,19 @@ static int force_orientation = -1;
 /** @auto_calibration_done: Whether initial hinge axis calibration completed */
 static bool auto_calibration_done = false;
 
+/*
+ * Angle stability filtering to prevent rapid state changes in flat positions
+ */
+
+/** @last_stable_angle: Last stable angle measurement */
+static unsigned int last_stable_angle = 0;
+
+/** @angle_instability_count: Count of unstable angle readings */
+static int angle_instability_count = 0;
+
+#define ANGLE_JUMP_THRESHOLD 100  /* degrees - detect major angle jumps */
+#define MAX_INSTABILITY_COUNT 5   /* max unstable readings before using last stable */
+
 /**
  * Module initialization and utility functions
  */
@@ -252,6 +265,76 @@ static int normalize1e6(struct vec3 *v)
 	v->y = (s32)((y * (s64)s) >> 20);
 	v->z = (s32)((z * (s64)s) >> 20);
 	return 1;
+}
+
+/**
+ * filter_angle_stability - Apply stability filtering to prevent rapid angle jumps
+ * @raw_angle: Raw angle measurement from sensors
+ * 
+ * Filters out rapid angle jumps that occur when laptop is in flat positions
+ * where accelerometer vectors become nearly parallel, causing mathematical
+ * instability in signed angle calculations. Specifically handles the case
+ * where angles jump between ~25° and ~335° in fully flat positions.
+ * 
+ * Returns: Filtered angle that prevents rapid state changes
+ */
+static unsigned int filter_angle_stability(unsigned int raw_angle)
+{
+	unsigned int angle_diff;
+	
+	/* On first reading, just store and return */
+	if (last_stable_angle == 0) {
+		last_stable_angle = raw_angle;
+		angle_instability_count = 0;
+		return raw_angle;
+	}
+	
+	/* Calculate difference, handling 360° wraparound */
+	if (raw_angle > last_stable_angle) {
+		angle_diff = min(raw_angle - last_stable_angle, 
+				 360 + last_stable_angle - raw_angle);
+	} else {
+		angle_diff = min(last_stable_angle - raw_angle,
+				 360 + raw_angle - last_stable_angle);
+	}
+	
+	/* Special case: detect the problematic 335° <-> 25° jump in flat position
+	 * In this case, prefer the higher angle (335°) as it's more physically correct */
+	if ((last_stable_angle > 300 && raw_angle < 60) || 
+	    (last_stable_angle < 60 && raw_angle > 300)) {
+		/* This is the flat position instability - prefer the tablet angle */
+		if (raw_angle > 300) {
+			/* New reading is in tablet range, accept it */
+			last_stable_angle = raw_angle;
+			angle_instability_count = 0;
+			return raw_angle;
+		} else {
+			/* New reading is low angle, likely unstable - keep stable one */
+			angle_instability_count++;
+			return last_stable_angle;
+		}
+	}
+	
+	/* Check for other large angle jumps indicating general instability */
+	if (angle_diff > ANGLE_JUMP_THRESHOLD) {
+		angle_instability_count++;
+		
+		/* If we've seen too many unstable readings, use the raw angle
+		 * (might be a legitimate state change) */
+		if (angle_instability_count > MAX_INSTABILITY_COUNT) {
+			last_stable_angle = raw_angle;
+			angle_instability_count = 0;
+			return raw_angle;
+		}
+		
+		/* Otherwise, stick with last stable angle */
+		return last_stable_angle;
+	} else {
+		/* Stable reading - update our stable angle and reset count */
+		last_stable_angle = raw_angle;
+		angle_instability_count = 0;
+		return raw_angle;
+	}
 }
 
 /**
@@ -483,6 +566,9 @@ static void evaluate_and_report(void)
 			axis.x = 0; axis.y = 1000000; axis.z = 0;
 		}
 		a = angle_deg_signed(&g_base, &g_lid, &axis);   /* 0..360 */
+		
+		/* Apply stability filtering in signed mode to prevent rapid jumps */
+		a = filter_angle_stability(a);
 	} else {
 		a = angle_deg_u(&g_base, &g_lid);               /* 0..180 */
 	}
