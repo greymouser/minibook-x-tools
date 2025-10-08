@@ -24,12 +24,12 @@
 #include "orientation_detection.h"
 
 /* Default configuration values */
-#define DEFAULT_HYSTERESIS_DEG          15      /* Hysteresis for orientation changes */
-#define DEFAULT_STABILITY_TIME_MS       100     /* Time to remain stable before switching */
+#define DEFAULT_HYSTERESIS_DEG          10      /* Hysteresis for orientation changes (reduced for maximum sensitivity) */
+#define DEFAULT_STABILITY_TIME_MS       200     /* Time to remain stable before switching (very low for quick response) */
 #define DEFAULT_FLAT_THRESHOLD_DEG      0       /* Disable flat detection entirely */
-#define DEFAULT_MOTION_THRESHOLD        500000  /* Motion detection threshold (scaled units) */
-#define DEFAULT_MOTION_SETTLE_MS        50      /* Wait after motion stops */
-#define DEFAULT_MIN_CONFIDENCE          70      /* Minimum confidence percentage */
+#define DEFAULT_MOTION_THRESHOLD        300000  /* Motion detection threshold (lowered for better motion detection) */
+#define DEFAULT_MOTION_SETTLE_MS        200     /* Wait after motion stops (reduced for faster response) */
+#define DEFAULT_MIN_CONFIDENCE          50      /* Minimum confidence percentage (lowered for maximum sensitivity) */
 
 /* Orientation angle ranges (in degrees from horizontal) */
 #define NORMAL_MIN      315     /* 315° - 45° (wrapping around 0°) */
@@ -58,57 +58,80 @@ static unsigned int gravity_to_angle(const struct vec3 *gravity)
 {
 	int angle_deg;
 	
-	/* Calculate angle using atan2(y, x) for screen rotation
+	/* Calculate angle using simplified atan2(y, x) approach
 	 * For screen coordinates:
 	 * - X axis: left to right (landscape width)
 	 * - Y axis: bottom to top (landscape height)  
 	 * - Z axis: back to front (through screen)
 	 */
 	
-	/* Simple 4-quadrant angle calculation based on dominant gravity direction */
-	if (ABS_S32(gravity->x) > ABS_S32(gravity->y)) {
-		/* X-dominant */
-		if (gravity->x > 0) {
-			/* Right side down -> rotate left (90°) */
-			angle_deg = 90;
+	/* Use a very sensitive approach - detect orientation based on primary gravity direction */
+	s32 x = gravity->x;
+	s32 y = gravity->y;
+	
+	/* Calculate the actual angle using atan2-like logic but much more sensitive */
+	/* We'll determine orientation primarily by the largest component, with minimal thresholds */
+	
+	/* Find the larger component to determine primary orientation */
+	if (ABS_S32(y) > ABS_S32(x)) {
+		/* Y is larger - vertical orientations (normal/inverted) */
+		if (y > 0) {
+			/* Bottom edge down -> normal (0°) */
+			angle_deg = 0;
+			
+			/* Add slight offset based on X component for better sensitivity */
+			if (x > ABS_S32(y) / 8) {
+				angle_deg = 30;   /* Slight tilt towards left */
+			} else if (x < -ABS_S32(y) / 8) {
+				angle_deg = 330;  /* Slight tilt towards right */
+			}
 		} else {
-			/* Left side down -> rotate right (270°) */
-			angle_deg = 270;
+			/* Top edge down -> inverted (180°) */
+			angle_deg = 180;
+			
+			/* Add slight offset based on X component */
+			if (x > ABS_S32(y) / 8) {
+				angle_deg = 150;  /* Slight tilt towards left */
+			} else if (x < -ABS_S32(y) / 8) {
+				angle_deg = 210;  /* Slight tilt towards right */
+			}
 		}
 	} else {
-		/* Y-dominant */
-		if (gravity->y > 0) {
-			/* Bottom down -> normal (0°) */
-			angle_deg = 0;
+		/* X is larger - horizontal orientations (left/right) */
+		if (x > 0) {
+			/* Right edge down -> left (90°) */
+			angle_deg = 90;
+			
+			/* Add slight offset based on Y component */
+			if (y > ABS_S32(x) / 8) {
+				angle_deg = 60;   /* Slight tilt towards normal */
+			} else if (y < -ABS_S32(x) / 8) {
+				angle_deg = 120;  /* Slight tilt towards inverted */
+			}
 		} else {
-			/* Top down -> inverted (180°) */
-			angle_deg = 180;
+			/* Left edge down -> right (270°) */
+			angle_deg = 270;
+			
+			/* Add slight offset based on Y component */
+			if (y > ABS_S32(x) / 8) {
+				angle_deg = 300;  /* Slight tilt towards normal */
+			} else if (y < -ABS_S32(x) / 8) {
+				angle_deg = 240;  /* Slight tilt towards inverted */
+			}
 		}
 	}
 	
-	/* Add fine-tuning based on secondary axis */
-	/* This provides smoother transitions between orientations */
-	if (angle_deg == 0 || angle_deg == 180) {
-		/* Horizontal orientations - adjust based on X component */
-		s64 x_ratio = (s64)gravity->x * 45; /* Max 45° adjustment */
-		u64 y_mag = ABS_S32(gravity->y);
-		if (y_mag > 0) {
-			int adjustment = (int)div_s64(x_ratio, (s64)y_mag);
-			adjustment = max(-45, min(45, adjustment));
-			angle_deg += adjustment;
-		}
-	} else {
-		/* Vertical orientations - adjust based on Y component */
-		s64 y_ratio = (s64)gravity->y * 45; /* Max 45° adjustment */
-		u64 x_mag = ABS_S32(gravity->x);
-		if (x_mag > 0) {
-			int adjustment = (int)div_s64(y_ratio, (s64)x_mag);
-			adjustment = max(-45, min(45, adjustment));
-			if (angle_deg == 90) {
-				angle_deg += adjustment;
-			} else { /* 270° */
-				angle_deg -= adjustment;
-			}
+	/* Special case: if components are very close, use quadrant logic */
+	if (ABS_S32(ABS_S32(x) - ABS_S32(y)) < max(ABS_S32(x), ABS_S32(y)) / 4) {
+		/* Very balanced - use exact quadrant */
+		if (x > 0 && y > 0) {
+			angle_deg = 45;   /* Between normal and left */
+		} else if (x > 0 && y < 0) {
+			angle_deg = 135;  /* Between left and inverted */
+		} else if (x < 0 && y < 0) {
+			angle_deg = 225;  /* Between inverted and right */
+		} else {
+			angle_deg = 315;  /* Between right and normal */
 		}
 	}
 	
