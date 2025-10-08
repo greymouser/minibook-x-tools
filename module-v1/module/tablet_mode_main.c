@@ -383,8 +383,8 @@ static void report_orientation(enum screen_orientation orient)
 	/* Convert orientation to rotation degrees for input event */
 	rotation_deg = orientation_to_degrees(orient);
 	if (rotation_deg >= 0) {
-		/* Report as absolute rotation value */
-		input_report_abs(tm_input, ABS_MT_ORIENTATION, rotation_deg);
+		/* Report as standard rotation event that desktop environments expect */
+		input_report_abs(tm_input, ABS_MISC, rotation_deg);
 		input_sync(tm_input);
 		
 		pr_info(DRV_NAME ": orientation -> %s (%d°)\n",
@@ -1183,13 +1183,9 @@ static int __init tm_init(void)
 	__set_bit(EV_SW, tm_input->evbit);
 	__set_bit(SW_TABLET_MODE, tm_input->swbit);
 	
-	/* Add orientation detection capabilities */
+	/* Add standard rotation event capabilities for desktop environment integration */
 	__set_bit(EV_ABS, tm_input->evbit);
-	input_set_abs_params(tm_input, ABS_MT_ORIENTATION, 0, 270, 0, 0);
-	
-	/* Add orientation detection capabilities */
-	__set_bit(EV_ABS, tm_input->evbit);
-	input_set_abs_params(tm_input, ABS_MT_ORIENTATION, 0, 270, 0, 0);
+	input_set_abs_params(tm_input, ABS_MISC, 0, 270, 90, 0);  /* 0°, 90°, 180°, 270° rotation */
 
 	err = input_register_device(tm_input);
 	if (err) {
