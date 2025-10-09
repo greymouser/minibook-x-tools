@@ -12,6 +12,8 @@
 modules.order
 Module.symvers
 
+kernel-patch
+
 # Object files and archives
 *.a
 *.so
