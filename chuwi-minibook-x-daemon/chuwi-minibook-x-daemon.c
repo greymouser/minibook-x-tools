@@ -511,6 +511,95 @@ static void cleanup_iio_buffer(struct iio_buffer *buf) {
     log_info("IIO buffer cleaned up for %s", buf->device_name);
 }
 
+/* Calculate hinge angle from base and lid accelerometer readings */
+static double calculate_hinge_angle(const struct accel_sample *base, const struct accel_sample *lid) {
+    /* Convert raw accelerometer values to normalized vectors */
+    double base_magnitude = sqrt(base->x * base->x + base->y * base->y + base->z * base->z);
+    double lid_magnitude = sqrt(lid->x * lid->x + lid->y * lid->y + lid->z * lid->z);
+    
+    if (base_magnitude < 1.0 || lid_magnitude < 1.0) {
+        return -1.0; /* Invalid reading */
+    }
+    
+    /* Normalize the vectors */
+    double base_norm[3] = {
+        base->x / base_magnitude,
+        base->y / base_magnitude, 
+        base->z / base_magnitude
+    };
+    
+    double lid_norm[3] = {
+        lid->x / lid_magnitude,
+        lid->y / lid_magnitude,
+        lid->z / lid_magnitude
+    };
+    
+    /* Calculate dot product */
+    double dot_product = base_norm[0] * lid_norm[0] + 
+                        base_norm[1] * lid_norm[1] + 
+                        base_norm[2] * lid_norm[2];
+    
+    /* Clamp dot product to valid range for acos */
+    if (dot_product > 1.0) dot_product = 1.0;
+    if (dot_product < -1.0) dot_product = -1.0;
+    
+    /* Calculate angle in radians, then convert to degrees */
+    double angle_rad = acos(dot_product);
+    double angle_deg = angle_rad * 180.0 / M_PI;
+    
+    /* Adjust angle based on expected hinge behavior:
+     * - Normal laptop mode (L shape): ~90 degrees
+     * - Flat (180 degrees): ~180 degrees  
+     * - Reverse L (screen bent back): ~270 degrees
+     * - Fully folded: ~360 degrees (0 degrees)
+     */
+    
+    /* The raw angle gives us the angle between the two surfaces.
+     * We need to map this to the hinge angle range 0-360 degrees.
+     * 
+     * When laptop is in normal L position, the accelerometers should
+     * read roughly perpendicular vectors (90 degrees).
+     * When flat, they should read roughly opposite vectors (180 degrees).
+     */
+    
+    return angle_deg;
+}
+
+/* Get laptop mode based on hinge angle */
+static const char* get_laptop_mode(double angle) {
+    if (angle < 0) {
+        return "INVALID";
+    } else if (angle >= 0 && angle < 45) {
+        return "CLOSED";        /* 0-45: Closed/nearly closed */
+    } else if (angle >= 45 && angle < 135) {
+        return "LAPTOP";        /* 45-135: Normal laptop mode (~90 degrees) */
+    } else if (angle >= 135 && angle < 225) {
+        return "FLAT";          /* 135-225: Flat/tablet mode (~180 degrees) */
+    } else if (angle >= 225 && angle < 315) {
+        return "REVERSE";       /* 225-315: Reverse L (~270 degrees) */
+    } else {
+        return "FOLDED";        /* 315-360: Fully folded */
+    }
+}
+
+/* Trigger sysfs trigger to generate IIO buffer samples */
+static int trigger_iio_sampling(void) {
+    FILE *fp;
+    
+    fp = fopen("/sys/bus/iio/devices/trigger0/trigger_now", "w");
+    if (!fp) {
+        return -1;
+    }
+    
+    if (fprintf(fp, "1") < 0) {
+        fclose(fp);
+        return -1;
+    }
+    
+    fclose(fp);
+    return 0;
+}
+
 /* Main processing loop with event-driven IIO reading */
 static int run_feeder(void)
 {
@@ -521,7 +610,8 @@ static int run_feeder(void)
     int lid_xs, lid_ys, lid_zs;
     unsigned int error_count = 0;
     const unsigned int max_errors = 10;
-    int poll_timeout = 1000; /* 1 second timeout */
+    int poll_timeout = cfg.poll_ms; /* Use configured poll interval for timeout */
+    int base_valid = 0, lid_valid = 0;
     
     log_info("Setting up IIO buffers for event-driven reading...");
     
@@ -557,7 +647,8 @@ static int run_feeder(void)
         }
         
         if (poll_result == 0) {
-            /* Timeout - continue to check running flag */
+            /* Timeout - trigger new samples and continue */
+            trigger_iio_sampling();
             continue;
         }
         
@@ -584,6 +675,8 @@ static int run_feeder(void)
                     log_error("Failed to write base vector to kernel module");
                     break;
                 }
+                
+                base_valid = 1;
                 
                 /* Reset error count on successful read */
                 error_count = 0;
@@ -614,9 +707,28 @@ static int run_feeder(void)
                     break;
                 }
                 
+                lid_valid = 1;
+                
                 /* Reset error count on successful read */
                 error_count = 0;
             }
+        }
+        
+        /* Calculate hinge angle if we have valid readings from both sensors */
+        if (base_valid && lid_valid) {
+            double angle = calculate_hinge_angle(&base_sample, &lid_sample);
+            const char* mode = get_laptop_mode(angle);
+            
+            if (angle >= 0) {
+                log_info("Hinge angle: %.1f° (%s) - Base[%d,%d,%d] Lid[%d,%d,%d]", 
+                        angle, mode,
+                        base_sample.x, base_sample.y, base_sample.z,
+                        lid_sample.x, lid_sample.y, lid_sample.z);
+            }
+            
+            /* Reset valid flags - we'll calculate again when new data arrives */
+            base_valid = 0;
+            lid_valid = 0;
         }
         
         /* Check for poll errors */
