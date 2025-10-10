@@ -75,17 +75,51 @@ static ssize_t i2c_config_show(struct device *dev,
 		       lid_bus, lid_addr, base_bus, base_addr);
 }
 
+static ssize_t sensor_diagnostic_show(struct device *dev,
+				     struct device_attribute *attr,
+				     char *buf)
+{
+	int len = 0;
+	
+	len += sprintf(buf + len, "=== Sensor Diagnostic Guide ===\n");
+	len += sprintf(buf + len, "Current I2C mapping:\n");
+	len += sprintf(buf + len, "  lid -> i2c-%d:0x%02x (mapped to iio:device0)\n", lid_bus, lid_addr);
+	len += sprintf(buf + len, "  base -> i2c-%d:0x%02x (mapped to iio:device1)\n", base_bus, base_addr);
+	len += sprintf(buf + len, "\n");
+	
+	len += sprintf(buf + len, "To verify sensor mapping:\n");
+	len += sprintf(buf + len, "1. Use sensor_analysis.sh or sensor_test.sh scripts\n");
+	len += sprintf(buf + len, "2. Check sensor readings:\n");
+	len += sprintf(buf + len, "   cat /sys/bus/iio/devices/iio:device0/in_accel_*_raw\n");
+	len += sprintf(buf + len, "   cat /sys/bus/iio/devices/iio:device1/in_accel_*_raw\n");
+	len += sprintf(buf + len, "\n");
+	
+	len += sprintf(buf + len, "Expected behavior (laptop flat on table):\n");
+	len += sprintf(buf + len, "- Both sensors should show gravity on Z-axis\n");
+	len += sprintf(buf + len, "- LID sensor: changes when lid moves\n");
+	len += sprintf(buf + len, "- BASE sensor: stable when only lid moves\n");
+	len += sprintf(buf + len, "\n");
+	
+	len += sprintf(buf + len, "Note: Your device has 90° rotated display, so sensors\n");
+	len += sprintf(buf + len, "may show X or Y dominant instead of Z dominant.\n");
+	len += sprintf(buf + len, "This is normal for the hardware orientation.\n");
+	
+	return len;
+}
+
 /* Device attributes */
 static DEVICE_ATTR_RO(hardware_status);
 static DEVICE_ATTR_RW(enabled);
 static DEVICE_ATTR_RO(accel_count);
 static DEVICE_ATTR_RO(i2c_config);
+static DEVICE_ATTR_RO(sensor_diagnostic);
 
 static struct attribute *chuwi_minibook_x_attrs[] = {
 	&dev_attr_hardware_status.attr,
 	&dev_attr_enabled.attr,
 	&dev_attr_accel_count.attr,
 	&dev_attr_i2c_config.attr,
+	&dev_attr_sensor_diagnostic.attr,
 	NULL
 };
 

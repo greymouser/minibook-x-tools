@@ -188,6 +188,104 @@ When `CONFIG_CHUWI_MINIBOOK_X_DEBUGFS=y`, additional debug files are available a
 - `test`: Test commands for development
 - Direct parameter access files
 
+## Diagnostic Tools
+
+The module includes several diagnostic scripts to help verify sensor configuration and troubleshoot issues:
+
+### Sensor Analysis Scripts
+
+#### `sensor_status.sh` - Quick Status Check
+Provides instant analysis of current sensor configuration:
+```bash
+./sensor_status.sh
+```
+- Shows current sensor readings and orientations
+- Indicates which sensors are mapped to lid/base
+- Provides orientation analysis for the 90° rotated display
+- No user interaction required
+
+#### `sensor_test.sh` - Interactive Sensor Identification
+Automated test to determine which sensor is in the lid vs base:
+```bash
+./sensor_test.sh
+```
+- Guides through physical movements (lid tilt, laptop tilt)
+- Automatically analyzes sensor response patterns
+- Provides recommendations for correct parameter mapping
+- Shows confidence level of the analysis
+- Suggests module parameter corrections if needed
+
+**Advanced Option**: Base sensor axis orientation test:
+```bash
+./sensor_test.sh
+# Select option 2 for base axis test
+# OR
+./base_axis_test.sh
+```
+- Determines exact X/Y axis orientations of the base sensor
+- Tests whether base sensor has any rotation in "laptop mode"
+- Guides through rotating the base in different directions
+- Confirms coordinate system mapping for tablet mode detection
+
+#### `sensor_analysis.sh` - Detailed Technical Analysis
+Technical analysis of sensor mounting and orientation:
+```bash
+./sensor_analysis.sh
+```
+- Detailed accelerometer data analysis
+- Gravity vector analysis
+- Hardware mounting orientation assessment
+- Useful for understanding the 90° display rotation impact
+
+#### `show_params.sh` - Parameter Display Helper
+Shows module parameters in both decimal and hex formats:
+```bash
+./show_params.sh
+```
+- Displays addresses in hex format (more intuitive for I2C)
+- Shows current configuration from kernel messages
+- Useful for parameter verification
+
+#### `base_axis_test.sh` - Base Sensor Coordinate System Test
+Determines the exact orientation of the base sensor's coordinate system:
+```bash
+./base_axis_test.sh
+```
+- Interactive test requiring physical laptop rotation
+- Maps sensor X/Y axes to physical laptop directions
+- Determines if base sensor has any rotation relative to standard laptop coordinates
+- Critical for understanding tablet mode detection requirements
+- Compares base sensor orientation with known lid sensor rotation
+
+**Test Process:**
+1. Baseline reading (laptop flat)
+2. Right side up test
+3. Left side up test  
+4. Front edge up test
+5. Back edge up test
+6. Automatic analysis of coordinate mapping
+
+**Results Help Determine:**
+- Whether base sensor follows standard laptop coordinate system
+- Any rotation applied to base sensor mounting
+- Coordinate transformation requirements for tablet mode
+- Relative orientation between lid and base sensors
+
+### Hardware Configuration Verification
+
+If you suspect the sensor mapping is incorrect, follow this process:
+
+1. **Quick Check**: Run `./sensor_status.sh` to see current state
+2. **Physical Test**: Run `./sensor_test.sh` for automated analysis
+3. **Apply Fix**: If mapping is wrong, the test script will provide exact commands to fix it
+
+Example of correcting sensor mapping:
+```bash
+# If the test determines the mapping is swapped
+sudo rmmod chuwi-minibook-x
+sudo insmod chuwi-minibook-x.ko lid_bus=12 base_bus=13
+```
+
 ## Usage Examples
 
 ### Basic Configuration
