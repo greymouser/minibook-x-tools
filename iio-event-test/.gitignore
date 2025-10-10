@@ -1,0 +1,24 @@
+# Build products
+iio_event_test
+*.o
+*.so
+*.a
+
+# Debug files
+*.dSYM/
+*.su
+*.idb
+*.pdb
+
+# Core dumps
+core
+core.*
+
+# Temporary files
+*.tmp
+*.swp
+*.swo
+*~
+
+# Log files
+*.log

@@ -21,6 +21,11 @@
 #include <math.h>
 #include <stdarg.h>
 #include <time.h>
+#include <poll.h>
+#include <fcntl.h>
+#include <endian.h>
+#include <stdint.h>
+#include <sys/types.h>
 
 #ifndef PATH_MAX
 #define PATH_MAX 4096
@@ -45,6 +50,23 @@ struct config {
     char sysfs_base[PATH_MAX];
 };
 
+/* IIO Buffer for event-driven reading */
+struct iio_buffer {
+    char device_name[DEVICE_NAME_MAX];
+    int buffer_fd;
+    int trigger_fd;
+    char trigger_name[64];
+    int x_index, y_index, z_index, timestamp_index;
+    int sample_size;
+    int enabled;
+};
+
+/* Accelerometer sample data */
+struct accel_sample {
+    int x, y, z;
+    uint64_t timestamp;
+};
+
 /* Global state */
 static volatile sig_atomic_t running = 1;
 static struct config cfg = {
@@ -53,7 +75,7 @@ static struct config cfg = {
     .poll_ms = 100,
     .daemon_mode = 0,
     .verbose = 0,
-    .sysfs_base = "/sys/kernel/chuwi-minibook-x"
+    .sysfs_base = "/sys/kernel/chuwi-minibook-x-tablet-mode"
 };
 
 /* Signal handlers */
@@ -269,54 +291,350 @@ static int validate_paths(void)
     return 0;
 }
 
-/* Main processing loop */
+/* Parse accelerometer value from buffer data (big-endian 12-bit) */
+static int parse_accel_value(const uint8_t *data) {
+    uint16_t raw = be16toh(*(uint16_t*)data);
+    raw >>= 4; /* Right shift by 4 bits for be:s12/16>>4 format */
+    
+    /* Sign extend from 12-bit to 16-bit */
+    if (raw & 0x800) {
+        raw |= 0xF000;
+    }
+    
+    return (int16_t)raw;
+}
+
+/* Setup IIO buffer for a device */
+static int setup_iio_buffer(struct iio_buffer *buf, const char *device_name) {
+    char path[PATH_MAX];
+    char buffer[256];
+    FILE *fp;
+    
+    memset(buf, 0, sizeof(*buf));
+    strncpy(buf->device_name, device_name, sizeof(buf->device_name) - 1);
+    buf->buffer_fd = -1;
+    buf->trigger_fd = -1;
+    
+    /* Get device number from device name */
+    int device_num;
+    if (sscanf(device_name, "iio:device%d", &device_num) != 1) {
+        log_error("Invalid device name format: %s", device_name);
+        return -1;
+    }
+    
+    /* Create trigger name - use the available sysfs trigger */
+    snprintf(buf->trigger_name, sizeof(buf->trigger_name), "sysfstrig0");
+    
+    /* Read scan element indices */
+    snprintf(path, sizeof(path), "/sys/bus/iio/devices/%s/scan_elements/in_accel_x_index", device_name);
+    fp = fopen(path, "r");
+    if (!fp || fscanf(fp, "%d", &buf->x_index) != 1) {
+        log_error("Failed to read X index for %s", device_name);
+        if (fp) fclose(fp);
+        return -1;
+    }
+    fclose(fp);
+    
+    snprintf(path, sizeof(path), "/sys/bus/iio/devices/%s/scan_elements/in_accel_y_index", device_name);
+    fp = fopen(path, "r");
+    if (!fp || fscanf(fp, "%d", &buf->y_index) != 1) {
+        log_error("Failed to read Y index for %s", device_name);
+        if (fp) fclose(fp);
+        return -1;
+    }
+    fclose(fp);
+    
+    snprintf(path, sizeof(path), "/sys/bus/iio/devices/%s/scan_elements/in_accel_z_index", device_name);
+    fp = fopen(path, "r");
+    if (!fp || fscanf(fp, "%d", &buf->z_index) != 1) {
+        log_error("Failed to read Z index for %s", device_name);
+        if (fp) fclose(fp);
+        return -1;
+    }
+    fclose(fp);
+    
+    snprintf(path, sizeof(path), "/sys/bus/iio/devices/%s/scan_elements/in_timestamp_index", device_name);
+    fp = fopen(path, "r");
+    if (!fp || fscanf(fp, "%d", &buf->timestamp_index) != 1) {
+        log_error("Failed to read timestamp index for %s", device_name);
+        if (fp) fclose(fp);
+        return -1;
+    }
+    fclose(fp);
+    
+    /* Enable scan elements */
+    snprintf(path, sizeof(path), "/sys/bus/iio/devices/%s/scan_elements/in_accel_x_en", device_name);
+    fp = fopen(path, "w");
+    if (!fp || fprintf(fp, "1") < 0) {
+        log_error("Failed to enable X scan element for %s", device_name);
+        if (fp) fclose(fp);
+        return -1;
+    }
+    fclose(fp);
+    
+    snprintf(path, sizeof(path), "/sys/bus/iio/devices/%s/scan_elements/in_accel_y_en", device_name);
+    fp = fopen(path, "w");
+    if (!fp || fprintf(fp, "1") < 0) {
+        log_error("Failed to enable Y scan element for %s", device_name);
+        if (fp) fclose(fp);
+        return -1;
+    }
+    fclose(fp);
+    
+    snprintf(path, sizeof(path), "/sys/bus/iio/devices/%s/scan_elements/in_accel_z_en", device_name);
+    fp = fopen(path, "w");
+    if (!fp || fprintf(fp, "1") < 0) {
+        log_error("Failed to enable Z scan element for %s", device_name);
+        if (fp) fclose(fp);
+        return -1;
+    }
+    fclose(fp);
+    
+    snprintf(path, sizeof(path), "/sys/bus/iio/devices/%s/scan_elements/in_timestamp_en", device_name);
+    fp = fopen(path, "w");
+    if (!fp || fprintf(fp, "1") < 0) {
+        log_error("Failed to enable timestamp scan element for %s", device_name);
+        if (fp) fclose(fp);
+        return -1;
+    }
+    fclose(fp);
+    
+    /* Set current trigger */
+    snprintf(path, sizeof(path), "/sys/bus/iio/devices/%s/trigger/current_trigger", device_name);
+    fp = fopen(path, "w");
+    if (!fp || fprintf(fp, "%s", buf->trigger_name) < 0) {
+        log_error("Failed to set trigger for %s", device_name);
+        if (fp) fclose(fp);
+        return -1;
+    }
+    fclose(fp);
+    
+    /* Enable buffer */
+    snprintf(path, sizeof(path), "/sys/bus/iio/devices/%s/buffer/enable", device_name);
+    fp = fopen(path, "w");
+    if (!fp || fprintf(fp, "1") < 0) {
+        log_error("Failed to enable buffer for %s", device_name);
+        if (fp) fclose(fp);
+        return -1;
+    }
+    fclose(fp);
+    
+    /* Open buffer for reading */
+    snprintf(path, sizeof(path), "/dev/%s", device_name);
+    buf->buffer_fd = open(path, O_RDONLY | O_NONBLOCK);
+    if (buf->buffer_fd < 0) {
+        log_error("Failed to open buffer for %s: %s", device_name, strerror(errno));
+        return -1;
+    }
+    
+    /* Open trigger for control (optional) */
+    buf->trigger_fd = -1;  /* We don't need to control the sysfs trigger directly */
+    
+    buf->sample_size = 16; /* 3 * 2 bytes + 8 bytes timestamp + padding */
+    buf->enabled = 1;
+    
+    log_info("IIO buffer setup complete for %s", device_name);
+    return 0;
+}
+
+/* Read sample from IIO buffer */
+static int read_iio_buffer_sample(struct iio_buffer *buf, struct accel_sample *sample) {
+    uint8_t buffer[16];
+    ssize_t bytes_read;
+    
+    if (!buf->enabled || buf->buffer_fd < 0) {
+        return -1;
+    }
+    
+    bytes_read = read(buf->buffer_fd, buffer, buf->sample_size);
+    if (bytes_read < 0) {
+        if (errno == EAGAIN || errno == EWOULDBLOCK) {
+            return 0; /* No data available */
+        }
+        log_error("Failed to read from buffer: %s", strerror(errno));
+        return -1;
+    }
+    
+    if (bytes_read != buf->sample_size) {
+        log_warn("Unexpected buffer read size: %zd (expected %d)", bytes_read, buf->sample_size);
+        return -1;
+    }
+    
+    /* Parse accelerometer values based on indices */
+    sample->x = parse_accel_value(&buffer[buf->x_index * 2]);
+    sample->y = parse_accel_value(&buffer[buf->y_index * 2]);
+    sample->z = parse_accel_value(&buffer[buf->z_index * 2]);
+    
+    /* Parse timestamp (little-endian 64-bit) */
+    sample->timestamp = le64toh(*(uint64_t*)&buffer[buf->timestamp_index * 2]);
+    
+    return 1; /* Sample read successfully */
+}
+
+/* Cleanup IIO buffer */
+static void cleanup_iio_buffer(struct iio_buffer *buf) {
+    char path[PATH_MAX];
+    FILE *fp;
+    
+    if (!buf->enabled) {
+        return;
+    }
+    
+    /* Disable buffer */
+    snprintf(path, sizeof(path), "/sys/bus/iio/devices/%s/buffer/enable", buf->device_name);
+    fp = fopen(path, "w");
+    if (fp) {
+        fprintf(fp, "0");
+        fclose(fp);
+    }
+    
+    /* Clear trigger */
+    snprintf(path, sizeof(path), "/sys/bus/iio/devices/%s/trigger/current_trigger", buf->device_name);
+    fp = fopen(path, "w");
+    if (fp) {
+        fprintf(fp, "");
+        fclose(fp);
+    }
+    
+    /* Close file descriptors */
+    if (buf->buffer_fd >= 0) {
+        close(buf->buffer_fd);
+        buf->buffer_fd = -1;
+    }
+    
+    if (buf->trigger_fd >= 0) {
+        close(buf->trigger_fd);
+        buf->trigger_fd = -1;
+    }
+    
+    buf->enabled = 0;
+    log_info("IIO buffer cleaned up for %s", buf->device_name);
+}
+
+/* Main processing loop with event-driven IIO reading */
 static int run_feeder(void)
 {
-    int base_x, base_y, base_z;
-    int lid_x, lid_y, lid_z;
-    double base_scale, lid_scale;
+    struct iio_buffer base_buf, lid_buf;
+    struct accel_sample base_sample, lid_sample;
+    struct pollfd poll_fds[2];
     int base_xs, base_ys, base_zs;
     int lid_xs, lid_ys, lid_zs;
     unsigned int error_count = 0;
     const unsigned int max_errors = 10;
+    int poll_timeout = 1000; /* 1 second timeout */
     
-    log_info("Starting feeder loop (poll interval: %u ms)", cfg.poll_ms);
+    log_info("Setting up IIO buffers for event-driven reading...");
+    
+    /* Setup IIO buffers */
+    if (setup_iio_buffer(&base_buf, cfg.base_dev) < 0) {
+        log_error("Failed to setup IIO buffer for base device %s", cfg.base_dev);
+        return -1;
+    }
+    
+    if (setup_iio_buffer(&lid_buf, cfg.lid_dev) < 0) {
+        log_error("Failed to setup IIO buffer for lid device %s", cfg.lid_dev);
+        cleanup_iio_buffer(&base_buf);
+        return -1;
+    }
+    
+    /* Setup poll file descriptors */
+    poll_fds[0].fd = base_buf.buffer_fd;
+    poll_fds[0].events = POLLIN;
+    poll_fds[1].fd = lid_buf.buffer_fd;
+    poll_fds[1].events = POLLIN;
+    
+    log_info("Starting event-driven feeder loop...");
     
     while (running) {
-        /* Read accelerometer data */
-        if (read_iio_device(cfg.base_dev, &base_x, &base_y, &base_z, &base_scale) < 0 ||
-            read_iio_device(cfg.lid_dev, &lid_x, &lid_y, &lid_z, &lid_scale) < 0) {
-            
-            error_count++;
-            if (error_count >= max_errors) {
-                log_error("Too many consecutive read errors (%u), exiting", error_count);
-                return -1;
+        int poll_result = poll(poll_fds, 2, poll_timeout);
+        
+        if (poll_result < 0) {
+            if (errno == EINTR) {
+                continue; /* Interrupted by signal */
             }
-            
-            log_warn("Read error %u/%u, retrying...", error_count, max_errors);
-            usleep(200000); /* 200ms recovery delay */
+            log_error("Poll error: %s", strerror(errno));
+            break;
+        }
+        
+        if (poll_result == 0) {
+            /* Timeout - continue to check running flag */
             continue;
         }
         
-        /* Reset error count on successful read */
-        error_count = 0;
-        
-        /* Apply scaling */
-        apply_scale(base_x, base_y, base_z, base_scale, &base_xs, &base_ys, &base_zs);
-        apply_scale(lid_x, lid_y, lid_z, lid_scale, &lid_xs, &lid_ys, &lid_zs);
-        
-        /* Write to kernel module */
-        if (write_vector("base", base_xs, base_ys, base_zs) < 0 ||
-            write_vector("lid", lid_xs, lid_ys, lid_zs) < 0) {
-            log_error("Failed to write vectors to kernel module");
-            return -1;
+        /* Check for base sensor data */
+        if (poll_fds[0].revents & POLLIN) {
+            int result = read_iio_buffer_sample(&base_buf, &base_sample);
+            if (result < 0) {
+                error_count++;
+                if (error_count >= max_errors) {
+                    log_error("Too many consecutive base read errors (%u), exiting", error_count);
+                    break;
+                }
+                log_warn("Base read error %u/%u", error_count, max_errors);
+                continue;
+            } else if (result > 0) {
+                /* Apply scaling - use fixed scale for now since IIO buffer data is already scaled */
+                apply_scale(base_sample.x, base_sample.y, base_sample.z, 1.0, 
+                           &base_xs, &base_ys, &base_zs);
+                
+                log_debug("Base: X=%d, Y=%d, Z=%d", base_sample.x, base_sample.y, base_sample.z);
+                
+                /* Write to kernel module */
+                if (write_vector("base", base_xs, base_ys, base_zs) < 0) {
+                    log_error("Failed to write base vector to kernel module");
+                    break;
+                }
+                
+                /* Reset error count on successful read */
+                error_count = 0;
+            }
         }
         
-        /* Sleep until next poll */
-        usleep(cfg.poll_ms * 1000);
+        /* Check for lid sensor data */
+        if (poll_fds[1].revents & POLLIN) {
+            int result = read_iio_buffer_sample(&lid_buf, &lid_sample);
+            if (result < 0) {
+                error_count++;
+                if (error_count >= max_errors) {
+                    log_error("Too many consecutive lid read errors (%u), exiting", error_count);
+                    break;
+                }
+                log_warn("Lid read error %u/%u", error_count, max_errors);
+                continue;
+            } else if (result > 0) {
+                /* Apply scaling - use fixed scale for now since IIO buffer data is already scaled */
+                apply_scale(lid_sample.x, lid_sample.y, lid_sample.z, 1.0,
+                           &lid_xs, &lid_ys, &lid_zs);
+                
+                log_debug("Lid: X=%d, Y=%d, Z=%d", lid_sample.x, lid_sample.y, lid_sample.z);
+                
+                /* Write to kernel module */
+                if (write_vector("lid", lid_xs, lid_ys, lid_zs) < 0) {
+                    log_error("Failed to write lid vector to kernel module");
+                    break;
+                }
+                
+                /* Reset error count on successful read */
+                error_count = 0;
+            }
+        }
+        
+        /* Check for poll errors */
+        if (poll_fds[0].revents & (POLLERR | POLLHUP | POLLNVAL)) {
+            log_error("Poll error on base buffer");
+            break;
+        }
+        if (poll_fds[1].revents & (POLLERR | POLLHUP | POLLNVAL)) {
+            log_error("Poll error on lid buffer");
+            break;
+        }
     }
     
-    log_info("Feeder loop terminated");
+    log_info("Cleaning up IIO buffers...");
+    cleanup_iio_buffer(&base_buf);
+    cleanup_iio_buffer(&lid_buf);
+    
+    log_info("Event-driven feeder loop terminated");
     return 0;
 }
 

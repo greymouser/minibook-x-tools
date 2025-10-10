@@ -1,0 +1,35 @@
+# Build products
+chuwi-minibook-x-daemon
+*.o
+*.so
+*.a
+
+# Debug files
+*.dSYM/
+*.su
+*.idb
+*.pdb
+
+# Core dumps
+core
+core.*
+
+# Temporary files
+*.tmp
+*.swp
+*.swo
+*~
+
+# Log files
+*.log
+
+# IDE/Editor files
+.vscode/
+.idea/
+*.sublime-*
+.clangd/
+compile_commands.json
+
+# System files
+.DS_Store
+Thumbs.db
