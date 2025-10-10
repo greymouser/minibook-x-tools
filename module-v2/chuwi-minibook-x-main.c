@@ -17,6 +17,7 @@
 #include <linux/i2c.h>
 #include <linux/string.h>
 #include <linux/dmi.h>
+#include <linux/property.h>
 
 #include "chuwi-minibook-x.h"
 
@@ -50,6 +51,53 @@ MODULE_PARM_DESC(base_bus, "I2C bus number for base accelerometer (default: 12)"
 int base_addr = 0x15;
 module_param(base_addr, int, 0644);
 MODULE_PARM_DESC(base_addr, "I2C address for base accelerometer (default: 0x15)");
+
+bool enable_mount_matrix = true;
+module_param(enable_mount_matrix, bool, 0644);
+MODULE_PARM_DESC(enable_mount_matrix, "Enable automatic mount matrix transformation (default: true)");
+
+/*
+ * Mount Matrix Definitions
+ * 
+ * Based on sensor orientation analysis from SENSOR_CONFIGURATION.md:
+ * - Lid sensor:  90° counter-clockwise rotation
+ * - Base sensor: 90° clockwise rotation
+ */
+
+/* Lid sensor mount matrix (90° CCW rotation) */
+static const char * const lid_sensor_mount_matrix[] = {
+	"0", "1", "0",    /* X' = Y  (laptop right = sensor back)  */
+	"-1", "0", "0",   /* Y' = -X (laptop back = sensor left)   */
+	"0", "0", "1"     /* Z' = Z  (laptop up = sensor up)       */
+};
+
+/* Base sensor mount matrix (90° CW rotation) */  
+static const char * const base_sensor_mount_matrix[] = {
+	"0", "-1", "0",   /* X' = -Y (laptop right = sensor front) */
+	"1", "0", "0",    /* Y' = X  (laptop back = sensor right)  */
+	"0", "0", "1"     /* Z' = Z  (laptop up = sensor up)       */
+};
+
+/* Property entries for lid sensor */
+static const struct property_entry lid_sensor_props[] = {
+	PROPERTY_ENTRY_STRING_ARRAY("mount-matrix", lid_sensor_mount_matrix),
+	{ }
+};
+
+/* Property entries for base sensor */
+static const struct property_entry base_sensor_props[] = {
+	PROPERTY_ENTRY_STRING_ARRAY("mount-matrix", base_sensor_mount_matrix),
+	{ }
+};
+
+/* Software nodes for device property assignment */
+static const struct software_node lid_sensor_node = {
+	.properties = lid_sensor_props,
+};
+
+static const struct software_node base_sensor_node = {
+	.properties = base_sensor_props,
+};
 
 /* Global driver context - will be replaced with proper device matching */
 static struct chuwi_minibook_x *g_chip;
@@ -228,10 +276,11 @@ static int chuwi_minibook_x_ensure_mxc4005_loaded(void)
  * @bus_nr: I2C bus number
  * @addr: I2C device address
  * @is_second: true if this is the second device (for tracking)
+ * @is_lid: true if this is the lid sensor, false for base sensor
  *
  * Returns: 0 on success, negative error code on failure
  */
-static int chuwi_minibook_x_instantiate_mxc4005(int bus_nr, int addr, bool is_second)
+static int chuwi_minibook_x_instantiate_mxc4005(int bus_nr, int addr, bool is_second, bool is_lid)
 {
 	struct i2c_adapter *adapter;
 	struct i2c_board_info info = {};
@@ -245,6 +294,19 @@ static int chuwi_minibook_x_instantiate_mxc4005(int bus_nr, int addr, bool is_se
 	
 	snprintf(info.type, sizeof(info.type), "mxc4005");
 	info.addr = addr;
+	
+	/* Apply mount matrix if enabled */
+	if (enable_mount_matrix) {
+		if (is_lid) {
+			info.swnode = &lid_sensor_node;
+			pr_info("chuwi-minibook-x: Applying lid sensor mount matrix (90° CCW)\n");
+		} else {
+			info.swnode = &base_sensor_node;
+			pr_info("chuwi-minibook-x: Applying base sensor mount matrix (90° CW)\n");
+		}
+	} else {
+		pr_info("chuwi-minibook-x: Mount matrix disabled, using identity transformation\n");
+	}
 	
 	client = i2c_new_client_device(adapter, &info);
 	i2c_put_adapter(adapter);
@@ -441,7 +503,7 @@ static int chuwi_minibook_x_detect_and_setup_accelerometers(void)
 		
 		/* Try to instantiate the lid accelerometer first */
 		pr_info("chuwi-minibook-x: Attempting to instantiate first MXC4005 on i2c-%d addr 0x%02x (lid)\n", lid_bus, lid_addr);
-		ret = chuwi_minibook_x_instantiate_mxc4005(lid_bus, lid_addr, false);
+		ret = chuwi_minibook_x_instantiate_mxc4005(lid_bus, lid_addr, false, true);
 		if (ret == 0) {
 			pr_info("chuwi-minibook-x: Successfully instantiated first MXC4005 on i2c-%d (lid)\n", lid_bus);
 			
@@ -450,7 +512,7 @@ static int chuwi_minibook_x_detect_and_setup_accelerometers(void)
 			
 			/* Now try the second device */
 			pr_info("chuwi-minibook-x: Attempting to instantiate second MXC4005 on i2c-%d addr 0x%02x (base)\n", base_bus, base_addr);
-			ret = chuwi_minibook_x_instantiate_mxc4005(base_bus, base_addr, true);
+			ret = chuwi_minibook_x_instantiate_mxc4005(base_bus, base_addr, true, false);
 			if (ret == 0) {
 				pr_info("chuwi-minibook-x: Successfully instantiated second MXC4005 on i2c-%d (base)\n", base_bus);
 				return 0;
@@ -464,7 +526,7 @@ static int chuwi_minibook_x_detect_and_setup_accelerometers(void)
 			
 			/* Try the base device location in case ACPI enumeration will handle the first */
 			pr_info("chuwi-minibook-x: Trying alternative instantiation on i2c-%d (base)\n", base_bus);
-			ret = chuwi_minibook_x_instantiate_mxc4005(base_bus, base_addr, false);
+			ret = chuwi_minibook_x_instantiate_mxc4005(base_bus, base_addr, false, false);
 			if (ret == 0) {
 				pr_info("chuwi-minibook-x: Successfully instantiated MXC4005 on i2c-%d (base)\n", base_bus);
 				return 0;
@@ -480,7 +542,7 @@ static int chuwi_minibook_x_detect_and_setup_accelerometers(void)
 		
 		/* First try base accelerometer location */
 		pr_info("chuwi-minibook-x: Attempting to instantiate second MXC4005 on i2c-%d addr 0x%02x (base)\n", base_bus, base_addr);
-		ret = chuwi_minibook_x_instantiate_mxc4005(base_bus, base_addr, true);
+		ret = chuwi_minibook_x_instantiate_mxc4005(base_bus, base_addr, true, false);
 		if (ret == 0) {
 			pr_info("chuwi-minibook-x: Successfully instantiated second MXC4005 on i2c-%d (base)\n", base_bus);
 			return 0;
@@ -488,7 +550,7 @@ static int chuwi_minibook_x_detect_and_setup_accelerometers(void)
 		
 		/* Try lid accelerometer location as alternative */
 		pr_info("chuwi-minibook-x: Trying alternative location i2c-%d addr 0x%02x (lid)\n", lid_bus, lid_addr);
-		ret = chuwi_minibook_x_instantiate_mxc4005(lid_bus, lid_addr, true);
+		ret = chuwi_minibook_x_instantiate_mxc4005(lid_bus, lid_addr, true, true);
 		if (ret == 0) {
 			pr_info("chuwi-minibook-x: Successfully instantiated second MXC4005 on i2c-%d (lid)\n", lid_bus);
 			return 0;
