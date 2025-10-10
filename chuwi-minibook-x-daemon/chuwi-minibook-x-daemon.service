@@ -1,6 +1,6 @@
 [Unit]
-Description=Chuwi Minibook X Tablet Mode Feeder
-Documentation=man:chuwi-minibook-x-tablet-mode(8)
+Description=Chuwi Minibook X Daemon
+Documentation=man:chuwi-minibook-x-daemon(8)
 # Wait for IIO subsystem to be available
 After=systemd-modules-load.service
 # Wait for the kernel module to be loaded (if using modprobe)
@@ -10,8 +10,8 @@ After=sysinit.target
 
 [Service]
 Type=exec
-ExecStart=/usr/sbin/chuwi-minibook-x-tablet-mode
-EnvironmentFile=-/etc/default/chuwi-minibook-x-tablet-mode
+ExecStart=/usr/sbin/chuwi-minibook-x-daemon
+EnvironmentFile=-/etc/default/chuwi-minibook-x-daemon
 Restart=on-failure
 RestartSec=5
 TimeoutStartSec=30

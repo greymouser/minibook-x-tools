@@ -1,10 +1,10 @@
-# Makefile for Chuwi Minibook X Tablet Mode Userspace Components
+# Makefile for Chuwi Minibook X Daemon
 #
 # Copyright (c) 2025 Armando DiCianno <armando@noonshy.com>
 # Licensed under GPL-2.0
 
 # Program information
-PROGRAM_NAME := chuwi-minibook-x-tablet-mode
+PROGRAM_NAME := chuwi-minibook-x-daemon
 VERSION := 1.0
 
 # Build configuration
@@ -18,7 +18,6 @@ LIBS := -lm
 PREFIX ?= /usr
 DESTDIR ?=
 BINDIR := $(PREFIX)/sbin
-LIBEXECDIR := $(PREFIX)/libexec/$(PROGRAM_NAME)
 SYSCONFDIR := /etc
 SYSTEMDDIR := $(PREFIX)/lib/systemd/system
 MANDIR := $(PREFIX)/share/man
@@ -27,7 +26,6 @@ MANDIR := $(PREFIX)/share/man
 SOURCES := $(PROGRAM_NAME).c
 OBJECTS := $(SOURCES:.c=.o)
 TARGET := $(PROGRAM_NAME)
-WRAPPER := $(PROGRAM_NAME)-wrapper
 MANPAGES := $(PROGRAM_NAME).8
 DOCFILES := BINARY_DOCUMENTATION.md
 CONFIGFILES := $(PROGRAM_NAME).default
@@ -59,17 +57,15 @@ clean:
 install: $(TARGET) install-config install-systemd install-man install-doc
 	@echo "Installing $(PROGRAM_NAME)..."
 	install -d $(DESTDIR)$(BINDIR)
-	install -d $(DESTDIR)$(LIBEXECDIR)
-	install -m 755 $(WRAPPER) $(DESTDIR)$(BINDIR)/$(PROGRAM_NAME)
-	install -m 755 $(TARGET) $(DESTDIR)$(LIBEXECDIR)/$(PROGRAM_NAME)
+	install -m 755 $(TARGET) $(DESTDIR)$(BINDIR)/$(PROGRAM_NAME)
 	@echo "Installation completed successfully"
 
 # Install configuration files
-install-config: $(PROGRAM_NAME).default
+install-config: $(PROGRAM_NAME).conf
 	@echo "Installing configuration files..."
 	install -d $(DESTDIR)$(SYSCONFDIR)/default
 	@if [[ ! -f $(DESTDIR)$(SYSCONFDIR)/default/$(PROGRAM_NAME) ]]; then \
-		install -m 644 $(PROGRAM_NAME).default $(DESTDIR)$(SYSCONFDIR)/default/$(PROGRAM_NAME); \
+		install -m 644 $(PROGRAM_NAME).conf $(DESTDIR)$(SYSCONFDIR)/default/$(PROGRAM_NAME); \
 		echo "Configuration file installed: $(DESTDIR)$(SYSCONFDIR)/default/$(PROGRAM_NAME)"; \
 	else \
 		echo "Configuration file already exists, not overwriting"; \
@@ -152,7 +148,7 @@ man: $(MANPAGES)
 dist: clean
 	@echo "Creating distribution package..."
 	tar -czf $(PROGRAM_NAME)-$(VERSION).tar.gz \
-		*.c $(WRAPPER) Makefile README.md *.service *.8 validate-config.sh
+		*.c Makefile README.md *.service *.8 *.conf validate-config.sh
 
 # Help target
 help:
@@ -172,8 +168,6 @@ help:
 	@echo "  run           - Build and run with default settings"
 	@echo "  gdb           - Build debug version and run in gdb"
 	@echo "  man           - View main program man page"
-	@echo "  man-wrapper   - View wrapper script man page"
-	@echo "  man-all       - View all man pages"
 	@echo "  dist          - Create distribution package"
 	@echo "  help          - Show this help"
 	@echo ""
@@ -186,4 +180,4 @@ help:
 # Dependencies
 $(PROGRAM_NAME).o: $(PROGRAM_NAME).c
 
-.PHONY: all debug analyze clean install install-config install-systemd install-man uninstall test check info run gdb man man-wrapper man-all dist help
+.PHONY: all debug analyze clean install install-config install-systemd install-man uninstall test check info run gdb man dist help

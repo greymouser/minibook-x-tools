@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0
 /* 
- * Chuwi Minibook X Tablet Mode Feeder
+ * Chuwi Minibook X Daemon
  * 
  * Userspace daemon that reads accelerometer data from IIO devices
  * and feeds it to the tablet mode detection kernel module.
@@ -26,11 +26,14 @@
 #define PATH_MAX 4096
 #endif
 
-#define PROGRAM_NAME "chuwi-minibook-x-tablet-mode"
+#define PROGRAM_NAME "chuwi-minibook-x-daemon"
 #define VERSION "1.0"
 
 /* Device name maximum length */
 #define DEVICE_NAME_MAX 128
+
+/* Forward declarations */
+static int find_iio_device_for_i2c(int bus, int addr, char *device_name, size_t name_size);
 
 /* Configuration */
 struct config {
@@ -50,7 +53,7 @@ static struct config cfg = {
     .poll_ms = 100,
     .daemon_mode = 0,
     .verbose = 0,
-    .sysfs_base = "/sys/kernel/chuwi-minibook-x-tablet-mode"
+    .sysfs_base = "/sys/kernel/chuwi-minibook-x"
 };
 
 /* Signal handlers */
@@ -317,16 +320,238 @@ static int run_feeder(void)
     return 0;
 }
 
+/* Auto-detect MXC4005 devices */
+static int auto_detect_devices(void)
+{
+    char path[PATH_MAX];
+    char name[64];
+    FILE *fp;
+    int device_count = 0;
+    char devices[2][DEVICE_NAME_MAX];
+    
+    log_info("Auto-detecting MXC4005 devices...");
+    
+    for (int i = 0; i < 10; i++) {
+        snprintf(path, sizeof(path), "/sys/bus/iio/devices/iio:device%d/name", i);
+        
+        fp = safe_fopen(path, "r");
+        if (!fp) continue;
+        
+        if (fgets(name, sizeof(name), fp) && strstr(name, "mxc4005")) {
+            snprintf(devices[device_count], sizeof(devices[device_count]), "iio:device%d", i);
+            log_info("Found MXC4005 device: %s", devices[device_count]);
+            device_count++;
+            if (device_count >= 2) {
+                fclose(fp);
+                break;
+            }
+        }
+        fclose(fp);
+    }
+    
+    if (device_count >= 2) {
+        strcpy(cfg.base_dev, devices[0]);
+        strcpy(cfg.lid_dev, devices[1]);
+        log_info("Auto-configured: base=%s, lid=%s", cfg.base_dev, cfg.lid_dev);
+        return 0;
+    }
+    
+    log_warn("Could not auto-detect enough MXC4005 devices (found %d, need 2)", device_count);
+    return -1;
+}
+
+/* Read device assignments from kernel module sysfs */
+static int read_kernel_device_assignments(void)
+{
+    char path[PATH_MAX];
+    FILE *fp;
+    char device_info[64];
+    int bus, addr;
+    
+    log_info("Reading device assignments from kernel module...");
+    
+    /* Read base device assignment */
+    snprintf(path, sizeof(path), "%s/iio_base_device", cfg.sysfs_base);
+    fp = safe_fopen(path, "r");
+    if (!fp) {
+        log_warn("Cannot read base device assignment from %s", path);
+        return -1;
+    }
+    
+    if (fgets(device_info, sizeof(device_info), fp)) {
+        /* Remove trailing newline */
+        char *newline = strchr(device_info, '\n');
+        if (newline) *newline = '\0';
+        
+        /* Check if it's already an IIO device name */
+        if (strncmp(device_info, "iio:device", 10) == 0) {
+            strncpy(cfg.base_dev, device_info, sizeof(cfg.base_dev) - 1);
+            cfg.base_dev[sizeof(cfg.base_dev) - 1] = '\0';
+            log_info("Base device from kernel: %s", cfg.base_dev);
+        } else if (sscanf(device_info, "i2c-%d:0x%x", &bus, &addr) == 2) {
+            /* Fallback: I2C info, need to find IIO device */
+            if (find_iio_device_for_i2c(bus, addr, cfg.base_dev, sizeof(cfg.base_dev)) == 0) {
+                log_info("Base device from kernel: %s (i2c %d-0x%02x)", cfg.base_dev, bus, addr);
+            } else {
+                log_warn("Could not find IIO device for base i2c %d-0x%02x", bus, addr);
+                fclose(fp);
+                return -1;
+            }
+        } else {
+            log_warn("Invalid base device format in kernel module: %s", device_info);
+            fclose(fp);
+            return -1;
+        }
+    }
+    fclose(fp);
+    
+    /* Read lid device assignment */
+    snprintf(path, sizeof(path), "%s/iio_lid_device", cfg.sysfs_base);
+    fp = safe_fopen(path, "r");
+    if (!fp) {
+        log_warn("Cannot read lid device assignment from %s", path);
+        return -1;
+    }
+    
+    if (fgets(device_info, sizeof(device_info), fp)) {
+        /* Remove trailing newline */
+        char *newline = strchr(device_info, '\n');
+        if (newline) *newline = '\0';
+        
+        /* Check if it's already an IIO device name */
+        if (strncmp(device_info, "iio:device", 10) == 0) {
+            strncpy(cfg.lid_dev, device_info, sizeof(cfg.lid_dev) - 1);
+            cfg.lid_dev[sizeof(cfg.lid_dev) - 1] = '\0';
+            log_info("Lid device from kernel: %s", cfg.lid_dev);
+        } else if (sscanf(device_info, "i2c-%d:0x%x", &bus, &addr) == 2) {
+            /* Fallback: I2C info, need to find IIO device */
+            if (find_iio_device_for_i2c(bus, addr, cfg.lid_dev, sizeof(cfg.lid_dev)) == 0) {
+                log_info("Lid device from kernel: %s (i2c %d-0x%02x)", cfg.lid_dev, bus, addr);
+            } else {
+                log_warn("Could not find IIO device for lid i2c %d-0x%02x", bus, addr);
+                fclose(fp);
+                return -1;
+            }
+        } else {
+            log_warn("Invalid lid device format in kernel module: %s", device_info);
+            fclose(fp);
+            return -1;
+        }
+    }
+    fclose(fp);
+    
+    return 0;
+}
+
+/* Find IIO device for given I2C bus/address */
+static int find_iio_device_for_i2c(int bus, int addr, char *device_name, size_t name_size)
+{
+    char path[PATH_MAX];
+    char link_target[PATH_MAX];
+    char i2c_name[64];
+    ssize_t link_len;
+    
+    /* Expected I2C device name format */
+    snprintf(i2c_name, sizeof(i2c_name), "%d-%04x", bus, addr);
+    
+    /* Search through IIO devices to find one with matching I2C device */
+    for (int i = 0; i < 10; i++) {
+        snprintf(path, sizeof(path), "/sys/bus/iio/devices/iio:device%d/device", i);
+        
+        /* Read the symlink to see if it points to our I2C device */
+        link_len = readlink(path, link_target, sizeof(link_target) - 1);
+        if (link_len > 0) {
+            link_target[link_len] = '\0';
+            
+            /* Check if the link target contains our I2C device name */
+            if (strstr(link_target, i2c_name)) {
+                snprintf(device_name, name_size, "iio:device%d", i);
+                return 0;
+            }
+        }
+    }
+    
+    return -1;
+}
+
+/* Wait for a path to exist */
+static int wait_for_path(const char *path, int timeout_sec)
+{
+    int tries = timeout_sec * 2; /* Check every 0.5 seconds */
+    
+    while (tries-- > 0) {
+        if (access(path, F_OK) == 0) {
+            return 0;
+        }
+        usleep(500000); /* 0.5 seconds */
+    }
+    
+    return -1;
+}
+
+/* Load configuration from file */
+static int load_config_file(const char *config_path)
+{
+    FILE *fp;
+    char line[256], key[64], value[192];
+    char *eq_pos;
+    
+    fp = fopen(config_path, "r");
+    if (!fp) {
+        if (errno != ENOENT) {
+            log_warn("Could not open config file %s: %s", config_path, strerror(errno));
+        }
+        return 0; /* Not finding config file is not an error */
+    }
+    
+    log_info("Loading configuration from %s", config_path);
+    
+    while (fgets(line, sizeof(line), fp)) {
+        /* Skip comments and empty lines */
+        char *trimmed = line;
+        while (*trimmed == ' ' || *trimmed == '\t') trimmed++;
+        if (*trimmed == '#' || *trimmed == '\n' || *trimmed == '\0') continue;
+        
+        /* Find = separator */
+        eq_pos = strchr(trimmed, '=');
+        if (!eq_pos) continue;
+        
+        /* Extract key and value */
+        *eq_pos = '\0';
+        strncpy(key, trimmed, sizeof(key) - 1);
+        key[sizeof(key) - 1] = '\0';
+        strncpy(value, eq_pos + 1, sizeof(value) - 1);
+        value[sizeof(value) - 1] = '\0';
+        
+        /* Remove trailing newline from value */
+        char *newline = strchr(value, '\n');
+        if (newline) *newline = '\0';
+        
+        /* Apply configuration */
+        if (strcmp(key, "POLL_MS") == 0) {
+            unsigned long poll_ms = strtoul(value, NULL, 10);
+            if (poll_ms > 0 && poll_ms <= 10000) {
+                cfg.poll_ms = (unsigned int)poll_ms;
+            }
+        } else if (strcmp(key, "SYSFS_DIR") == 0) {
+            strncpy(cfg.sysfs_base, value, sizeof(cfg.sysfs_base) - 1);
+            cfg.sysfs_base[sizeof(cfg.sysfs_base) - 1] = '\0';
+        }
+    }
+    
+    fclose(fp);
+    return 0;
+}
+
 /* Print usage information */
 static void usage(void)
 {
     printf("Usage: %s [OPTIONS]\n", PROGRAM_NAME);
     printf("\n");
     printf("Userspace feeder for Chuwi Minibook X tablet mode detection\n");
+    printf("Device assignments are automatically detected from kernel module.\n");
     printf("\n");
     printf("Options:\n");
-    printf("  -b, --base-device DEV    Base accelerometer device (default: %s)\n", cfg.base_dev);
-    printf("  -l, --lid-device DEV     Lid accelerometer device (default: %s)\n", cfg.lid_dev);
     printf("  -p, --poll-ms MS         Polling interval in milliseconds (default: %u)\n", cfg.poll_ms);
     printf("  -s, --sysfs-path PATH    Kernel module sysfs path (default: %s)\n", cfg.sysfs_base);
     printf("  -d, --daemon             Run as daemon\n");
@@ -335,17 +560,14 @@ static void usage(void)
     printf("  -V, --version            Show version\n");
     printf("\n");
     printf("Examples:\n");
-    printf("  %s                                    # Use defaults\n", PROGRAM_NAME);
-    printf("  %s -b iio:device0 -l iio:device1     # Specify devices\n", PROGRAM_NAME);
-    printf("  %s -p 50 -v                          # 50ms polling, verbose\n", PROGRAM_NAME);
+    printf("  %s                       # Use defaults with auto-detected devices\n", PROGRAM_NAME);
+    printf("  %s -p 50 -v             # 50ms polling, verbose\n", PROGRAM_NAME);
 }
 
 /* Parse command line arguments */
 static int parse_args(int argc, char **argv)
 {
     static struct option long_options[] = {
-        {"base-device", required_argument, 0, 'b'},
-        {"lid-device",  required_argument, 0, 'l'},
         {"poll-ms",     required_argument, 0, 'p'},
         {"sysfs-path",  required_argument, 0, 's'},
         {"daemon",      no_argument,       0, 'd'},
@@ -359,24 +581,8 @@ static int parse_args(int argc, char **argv)
     char *endptr;
     unsigned long val;
     
-    while ((c = getopt_long(argc, argv, "b:l:p:s:dvhV", long_options, NULL)) != -1) {
+    while ((c = getopt_long(argc, argv, "p:s:dvhV", long_options, NULL)) != -1) {
         switch (c) {
-            case 'b':
-                if (strlen(optarg) >= sizeof(cfg.base_dev)) {
-                    log_error("Base device name too long");
-                    return -1;
-                }
-                strcpy(cfg.base_dev, optarg);
-                break;
-                
-            case 'l':
-                if (strlen(optarg) >= sizeof(cfg.lid_dev)) {
-                    log_error("Lid device name too long");
-                    return -1;
-                }
-                strcpy(cfg.lid_dev, optarg);
-                break;
-                
             case 'p':
                 errno = 0;
                 val = strtoul(optarg, &endptr, 10);
@@ -450,8 +656,51 @@ static int setup_signals(void)
 
 int main(int argc, char **argv)
 {
-    /* Parse command line arguments */
+    /* Load configuration file first */
+    load_config_file("/etc/default/chuwi-minibook-x-daemon");
+    
+    /* Parse command line arguments (overrides config file) */
     if (parse_args(argc, argv) < 0) {
+        return 1;
+    }
+    
+    /* Wait for kernel module sysfs interface to be available */
+    char sysfs_path[PATH_MAX];
+    snprintf(sysfs_path, sizeof(sysfs_path), "%s/base_vec", cfg.sysfs_base);
+    if (wait_for_path(sysfs_path, 30) < 0) {
+        log_error("Kernel module sysfs interface not found: %s", cfg.sysfs_base);
+        return 1;
+    }
+    
+    /* Read device assignments from kernel module */
+    if (read_kernel_device_assignments() < 0) {
+        log_info("Kernel device assignments not available, falling back to auto-detection...");
+        
+        /* Auto-detect devices if kernel assignments failed */
+        char base_path[PATH_MAX], lid_path[PATH_MAX];
+        snprintf(base_path, sizeof(base_path), "/sys/bus/iio/devices/%s", cfg.base_dev);
+        snprintf(lid_path, sizeof(lid_path), "/sys/bus/iio/devices/%s", cfg.lid_dev);
+        
+        if (access(base_path, F_OK) != 0 || access(lid_path, F_OK) != 0) {
+            log_info("Configured devices not found, attempting auto-detection...");
+            if (auto_detect_devices() < 0) {
+                log_error("Failed to detect accelerometer devices");
+                return 1;
+            }
+        }
+    }
+    
+    /* Wait for devices to be ready */
+    char base_path[PATH_MAX], lid_path[PATH_MAX];
+    snprintf(base_path, sizeof(base_path), "/sys/bus/iio/devices/%s/in_accel_x_raw", cfg.base_dev);
+    if (wait_for_path(base_path, 30) < 0) {
+        log_error("Base IIO device not ready: %s", cfg.base_dev);
+        return 1;
+    }
+    
+    snprintf(lid_path, sizeof(lid_path), "/sys/bus/iio/devices/%s/in_accel_x_raw", cfg.lid_dev);
+    if (wait_for_path(lid_path, 30) < 0) {
+        log_error("Lid IIO device not ready: %s", cfg.lid_dev);
         return 1;
     }
     

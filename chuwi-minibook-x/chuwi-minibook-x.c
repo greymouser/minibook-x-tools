@@ -382,13 +382,49 @@ static ssize_t store_lid_vec(struct kobject *k, struct kobj_attribute *a,
 	return l;
 }
 
+/**
+ * show_iio_base_device - Show IIO device name for base accelerometer
+ */
+static ssize_t show_iio_base_device(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
+{
+	/* Base is typically on i2c-12, which usually maps to iio:device1 */
+	if (base_bus == 12) {
+		return snprintf(buf, PAGE_SIZE, "iio:device1\n");
+	} else if (base_bus == 13) {
+		return snprintf(buf, PAGE_SIZE, "iio:device0\n");
+	} else {
+		/* Fallback - provide I2C info for userspace to resolve */
+		return snprintf(buf, PAGE_SIZE, "i2c-%d:0x%02x\n", base_bus, base_addr);
+	}
+}
+
+/**
+ * show_iio_lid_device - Show IIO device name for lid accelerometer  
+ */
+static ssize_t show_iio_lid_device(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
+{
+	/* Lid is typically on i2c-13, which usually maps to iio:device0 */
+	if (lid_bus == 13) {
+		return snprintf(buf, PAGE_SIZE, "iio:device0\n");
+	} else if (lid_bus == 12) {
+		return snprintf(buf, PAGE_SIZE, "iio:device1\n");
+	} else {
+		/* Fallback - provide I2C info for userspace to resolve */
+		return snprintf(buf, PAGE_SIZE, "i2c-%d:0x%02x\n", lid_bus, lid_addr);
+	}
+}
+
 /* Basic attribute definitions */
 static struct kobj_attribute base_vec_attr = __ATTR(base_vec, 0644, show_base_vec, store_base_vec);
 static struct kobj_attribute lid_vec_attr = __ATTR(lid_vec, 0644, show_lid_vec, store_lid_vec);
+static struct kobj_attribute iio_base_device_attr = __ATTR(iio_base_device, 0444, show_iio_base_device, NULL);
+static struct kobj_attribute iio_lid_device_attr = __ATTR(iio_lid_device, 0444, show_iio_lid_device, NULL);
 
 static struct attribute *tablet_mode_attrs[] = {
 	&base_vec_attr.attr,
 	&lid_vec_attr.attr,
+	&iio_base_device_attr.attr,
+	&iio_lid_device_attr.attr,
 	NULL,
 };
 

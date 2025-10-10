@@ -1,6 +1,6 @@
-# Chuwi Minibook X Tablet Mode Daemon
+# Chuwi Minibook X Daemon
 
-This userspace daemon feeds accelerometer data to the tablet mode detection kernel module. It has been adapted from module-v1 to work with the new integrated v3 kernel module that includes mount matrix support.
+This userspace daemon provides accelerometer data to the tablet mode detection kernel module. It is a unified daemon that includes auto-detection, configuration loading, and device management capabilities.
 
 ## Purpose
 
@@ -8,12 +8,14 @@ The daemon bridges the gap between:
 - **IIO accelerometer devices** with mount matrix transformations
 - **Kernel module** expecting pre-transformed gravity vector data
 
-## Key Changes from v1
+## Features
 
-1. **Mount Matrix Support**: Now expects accelerometer devices to have mount matrices applied automatically
-2. **Simplified Coordinate Handling**: No longer needs to handle sensor orientation corrections
-3. **Event-Driven Communication**: Writes to kernel sysfs trigger immediate processing (no polling delays)
-4. **Optimized for v3 Module**: Designed specifically for the integrated v3 kernel module
+1. **Unified Design**: Single executable with integrated functionality (no wrapper scripts)
+2. **Auto-Detection**: Automatically detects MXC4005 accelerometer devices
+3. **Configuration File Support**: Loads settings from `/etc/default/chuwi-minibook-x-daemon`
+4. **Device Waiting**: Waits for kernel module and IIO devices to be ready
+5. **Mount Matrix Support**: Works with mount matrix coordinate transformations
+6. **Event-Driven Communication**: Writes to kernel sysfs trigger immediate processing
 
 ## Operation
 
