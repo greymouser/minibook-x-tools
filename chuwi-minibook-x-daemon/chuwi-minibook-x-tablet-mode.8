@@ -1,0 +1,219 @@
+." Man page for chuwi-minibook-x-tablet-mode\" Man page for chuwi-minibook-x-tablet-mode-wrapper
+.\" Copyright (c) 2025 Armando DiCianno <armando@noonshy.com>
+.\" Licensed under GPL-2.0
+.\"
+.TH CHUWI-MINIBOOK-X-TABLET-MODE 8 "October 2025" "1.0" "System Administration"
+.SH NAME
+chuwi-minibook-x-tablet-mode \- Chuwi Minibook X tablet mode daemon
+.SH SYNOPSIS
+.B chuwi-minibook-x-tablet-mode
+.SH DESCRIPTION
+.B chuwi-minibook-x-tablet-mode
+is the main command for Chuwi Minibook X tablet mode detection. It provides automatic device detection and initialization for the tablet mode daemon through an intelligent wrapper that:
+.IP \(bu 4
+Automatically detects MXC4005 accelerometer devices
+.IP \(bu 4
+Waits for kernel module and IIO device availability
+.IP \(bu 4
+Loads configuration from environment files
+.IP \(bu 4
+Launches the main daemon with appropriate parameters
+.PP
+This wrapper is typically used by the systemd service to provide robust startup behavior and automatic hardware detection.
+.SH OPERATION
+The wrapper performs the following initialization sequence:
+.IP 1. 4
+Load configuration from
+.I /etc/default/chuwi-minibook-x-tablet-mode
+(if available)
+.IP 2. 4
+Set default values for device names and polling interval
+.IP 3. 4
+Check if configured devices exist; if not, auto-detect MXC4005 devices
+.IP 4. 4
+Wait for kernel module sysfs interface to become available
+.IP 5. 4
+Wait for IIO devices to become ready
+.IP 6. 4
+Execute the main daemon with detected/configured parameters
+.SH AUTOMATIC DEVICE DETECTION
+If the configured BASE_IIO or LID_IIO devices are not found, the wrapper automatically searches for MXC4005 accelerometer devices by:
+.IP 1. 4
+Scanning all IIO devices in
+.I /sys/bus/iio/devices/
+.IP 2. 4
+Reading the device name from each device's
+.I name
+file
+.IP 3. 4
+Selecting the first two devices that match "mxc4005"
+.IP 4. 4
+Assigning them as BASE_IIO and LID_IIO respectively
+.PP
+This provides automatic hardware detection for standard Chuwi Minibook X configurations.
+.SH CONFIGURATION
+The wrapper reads configuration from the environment file:
+.I /etc/default/chuwi-minibook-x-tablet-mode
+
+Supported variables:
+.TP
+.B BASE_IIO
+Base (keyboard) accelerometer device name
+.br
+Default: auto-detected or
+.I iio:device0
+.TP
+.B LID_IIO
+Lid (screen) accelerometer device name
+.br
+Default: auto-detected or
+.I iio:device1
+.TP
+.B POLL_MS
+Polling interval in milliseconds
+.br
+Default:
+.I 100
+.SH WAITING BEHAVIOR
+The wrapper implements intelligent waiting for system readiness:
+.SS Kernel Module Wait
+Waits up to 30 seconds (60 × 0.5s) for:
+.I /sys/kernel/chuwi-minibook-x-tablet-mode/base_vec
+.SS IIO Device Wait  
+Waits up to 30 seconds for each IIO device's accelerometer interface:
+.I /sys/bus/iio/devices/*/in_accel_x_raw
+.SS Timeout Handling
+If any required component is not available within the timeout period, the wrapper exits with an error message indicating which component failed to initialize.
+.SH ERROR CONDITIONS
+The wrapper exits with status 1 in the following cases:
+.TP
+.B Kernel module not available
+The tablet mode kernel module sysfs interface is not found
+.TP
+.B IIO devices not ready
+Required accelerometer devices are not accessible
+.TP
+.B No MXC4005 devices found
+Auto-detection found no suitable accelerometer devices
+.TP
+.B Insufficient devices
+Auto-detection found fewer than 2 MXC4005 devices
+.SH FILES
+.TP
+.I /usr/sbin/chuwi-minibook-x-tablet-mode
+Wrapper script executable
+.TP
+.I /etc/default/chuwi-minibook-x-tablet-mode
+Configuration file with environment variables
+.TP
+.I /sys/kernel/chuwi-minibook-x-tablet-mode/
+Kernel module sysfs interface (must exist)
+.TP
+.I /sys/bus/iio/devices/iio:device*/name
+IIO device name files for auto-detection
+.TP
+.I /sys/bus/iio/devices/iio:device*/in_accel_x_raw
+IIO accelerometer data files (readiness check)
+.SH EXAMPLES
+.SS Manual Execution
+Run the wrapper manually (requires root for sysfs access):
+.nf
+.B sudo chuwi-minibook-x-tablet-mode
+.fi
+.SS Systemd Service
+The wrapper is typically invoked by systemd:
+.nf
+.B systemctl start chuwi-minibook-x-tablet-mode
+.fi
+.SS Configuration Example
+Create custom configuration in
+.I /etc/default/chuwi-minibook-x-tablet-mode:
+.nf
+# Force specific devices (disable auto-detection)
+BASE_IIO=iio:device2
+LID_IIO=iio:device3
+
+# Faster polling
+POLL_MS=50
+.fi
+.SH DIAGNOSTICS
+.SS Debug Information
+The wrapper provides diagnostic output indicating:
+.IP \(bu 4
+Which devices are being used (detected or configured)
+.IP \(bu 4
+Wait status for kernel module and IIO devices
+.IP \(bu 4
+Error messages for missing components
+.SS Manual Testing
+Test device detection manually:
+.nf
+.B # Check available IIO devices
+.B ls /sys/bus/iio/devices/
+
+.B # Check for MXC4005 devices
+.B for dev in /sys/bus/iio/devices/iio:device*/name; do
+.B     echo "$dev: $(cat "$dev" 2>/dev/null)"
+.B done
+
+.B # Verify kernel module
+.B ls -la /sys/kernel/chuwi-minibook-x-tablet-mode/
+.fi
+.SH ENVIRONMENT
+The wrapper uses the following environment variables (typically set via the configuration file):
+.TP
+.B BASE_IIO
+Override auto-detection for base device
+.TP
+.B LID_IIO
+Override auto-detection for lid device
+.TP
+.B POLL_MS
+Set polling interval for the daemon
+.SH EXIT STATUS
+.TP
+.B 0
+Successful initialization and daemon launch
+.TP
+.B 1
+Initialization failure (missing kernel module, IIO devices, or timeout)
+.SH SECURITY
+The wrapper script is designed to run with appropriate privileges:
+.IP \(bu 4
+Requires read access to IIO sysfs files
+.IP \(bu 4
+Requires write access to kernel module sysfs files
+.IP \(bu 4
+When run via systemd, uses security restrictions
+.IP \(bu 4
+Performs input validation on device names
+.SH SEE ALSO
+.BR chuwi-minibook-x-tablet-mode (8),
+.BR systemctl (1),
+.BR modprobe (8)
+.SH DEPENDENCIES
+.IP \(bu 4
+Bash shell (version 4.0 or later)
+.IP \(bu 4
+Standard Unix utilities (grep, basename, dirname)
+.IP \(bu 4
+Access to
+.I /sys/bus/iio/devices/
+and
+.I /sys/kernel/chuwi-minibook-x-tablet-mode/
+.SH BUGS
+Report bugs to the project issue tracker or contact the author.
+.PP
+Known limitations:
+.IP \(bu 4
+Auto-detection assumes first two MXC4005 devices are base and lid
+.IP \(bu 4
+No mechanism to validate device assignment correctness
+.IP \(bu 4
+Fixed timeout values may not suit all system configurations
+.SH AUTHOR
+Armando DiCianno <armando@noonshy.com>
+.SH COPYRIGHT
+Copyright (c) 2025 Armando DiCianno. Licensed under GPL-2.0.
+.PP
+This is free software; see the source for copying conditions. There is NO warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.

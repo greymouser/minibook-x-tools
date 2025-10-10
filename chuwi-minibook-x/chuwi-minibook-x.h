@@ -1,0 +1,75 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+/*
+ * Chuwi Minibook X Platform Driver
+ *
+ * Copyright (C) 2025 Your Name
+ *
+ * Hardware identification and accelerometer detection driver
+ * for the Chuwi Minibook X convertible laptop.
+ */
+
+#ifndef _CHUWI_MINIBOOK_X_H_
+#define _CHUWI_MINIBOOK_X_H_
+
+#include <linux/types.h>
+#include <linux/mutex.h>
+
+#define CHUWI_MINIBOOK_X_DRIVER_NAME "chuwi-minibook-x"
+
+/* Module parameters (defined in main.c) */
+extern int lid_bus;
+extern int lid_addr;
+extern int base_bus;
+extern int base_addr;
+extern bool debug_mode;
+
+/* ACPI device information structure */
+struct accel_i2c_info {
+	int bus_nr;
+	int addr;
+	char name[32];
+};
+
+/* Driver context structure */
+struct chuwi_minibook_x {
+	/* Platform device */
+	struct platform_device *pdev;
+	
+	/* ACPI device information */
+	struct accel_i2c_info accel_i2c_info[2];  /* Maximum 2 accelerometers */
+	int accel_count;      /* Number of accelerometers found via ACPI */
+	
+	/* Synchronization */
+	struct mutex lock;
+	
+	/* Module configuration */
+	bool enabled;
+	
+	/* Debugging */
+#ifdef CONFIG_CHUWI_MINIBOOK_X_DEBUGFS
+	struct dentry *debugfs_dir;
+	struct dentry *debugfs_raw_data;
+	struct dentry *debugfs_calculations;
+#endif
+};
+
+/* Function declarations */
+
+/* Main module functions */
+int chuwi_minibook_x_probe(struct platform_device *pdev);
+void chuwi_minibook_x_remove(struct platform_device *pdev);
+
+/* Sysfs interface */
+int chuwi_minibook_x_create_sysfs(struct chuwi_minibook_x *chip);
+void chuwi_minibook_x_remove_sysfs(struct chuwi_minibook_x *chip);
+
+#ifdef CONFIG_CHUWI_MINIBOOK_X_DEBUGFS
+/* Debugfs interface */
+int chuwi_minibook_x_debugfs_init(struct chuwi_minibook_x *chip);
+void chuwi_minibook_x_debugfs_cleanup(struct chuwi_minibook_x *chip);
+#else
+static inline int chuwi_minibook_x_debugfs_init(struct chuwi_minibook_x *chip) { return 0; }
+static inline void chuwi_minibook_x_debugfs_cleanup(struct chuwi_minibook_x *chip) {}
+#endif
+
+#endif /* _CHUWI_MINIBOOK_X_H_ */
