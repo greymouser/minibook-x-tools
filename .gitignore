@@ -8,6 +8,7 @@ Module.symvers
 modules.order
 .*.cmd
 .tmp_versions/
+kernel/
 
 # Compiled object files
 *.o
