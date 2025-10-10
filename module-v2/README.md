@@ -107,6 +107,16 @@ CONFIG_DEBUG_FS=y
 
 ### Module Parameters
 
+#### Hardware Configuration
+- `lid_bus`: I2C bus number for lid accelerometer (default: 13)
+- `lid_addr`: I2C address for lid accelerometer (default: 0x15)
+- `base_bus`: I2C bus number for base accelerometer (default: 12)
+- `base_addr`: I2C address for base accelerometer (default: 0x15)
+
+#### Detection Configuration
+- `debug_mode`: Enable debug output for hardware detection (default: false)
+
+#### Behavioral Configuration (if full orientation detection is enabled)
 - `poll_interval`: Polling interval in milliseconds (default: 200)
 - `enter_threshold`: Angle to enter tablet mode in degrees (default: 200)
 - `exit_threshold`: Angle to exit tablet mode in degrees (default: 170)
@@ -114,16 +124,37 @@ CONFIG_DEBUG_FS=y
 - `signed_mode`: Use signed angle mode 0-360° (default: true)
 - `enable_orientation`: Enable orientation detection (default: true)
 
-Example:
+Example hardware configuration:
 ```bash
-modprobe chuwi-minibook-x poll_interval=100 enter_threshold=210
+# Load with custom I2C configuration
+sudo insmod chuwi-minibook-x.ko lid_bus=14 lid_addr=0x16 base_bus=11 base_addr=0x14
+
+# Load with debug enabled
+sudo insmod chuwi-minibook-x.ko debug_mode=1
+
+# Load with custom behavioral parameters (if orientation detection enabled)
+sudo modprobe chuwi-minibook-x poll_interval=100 enter_threshold=210
 ```
 
 ### Sysfs Interface
 
 Located at `/sys/devices/platform/chuwi-minibook-x/`
 
-#### Tablet Mode Configuration
+#### Hardware Status and Configuration
+- `hardware_status`: Overall driver and hardware status
+- `enabled`: Enable/disable driver functionality (read/write)
+- `accel_count`: Number of detected accelerometers
+- `i2c_config`: I2C bus/address configuration (shows addresses in hex format)
+
+#### Module Parameter Display
+The kernel displays module parameters in decimal format at `/sys/module/chuwi_minibook_x/parameters/`, but you can view them in hex format using:
+```bash
+cat /sys/devices/platform/chuwi-minibook-x/i2c_config
+# or use the helper script
+./show_params.sh
+```
+
+#### Tablet Mode Configuration (if full orientation detection enabled)
 - `tablet_enter_threshold`: Angle threshold to enter tablet mode
 - `tablet_exit_threshold`: Angle threshold to exit tablet mode  
 - `tablet_hysteresis`: Hysteresis for tablet mode switching
