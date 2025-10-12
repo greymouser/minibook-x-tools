@@ -269,6 +269,58 @@ static int write_vector(const char *name, int x, int y, int z)
     return 0;
 }
 
+/* Write mode to kernel module sysfs */
+static int write_mode(const char *mode)
+{
+    char path[PATH_MAX];
+    FILE *f;
+    
+    if ((size_t)snprintf(path, sizeof(path), "%s/mode", cfg.sysfs_base) >= sizeof(path)) {
+        log_error("Path too long for mode");
+        return -1;
+    }
+    
+    f = safe_fopen(path, "w");
+    if (!f) return -1;
+    
+    if (fprintf(f, "%s\n", mode) < 0) {
+        log_error("Failed to write mode to %s: %s", path, strerror(errno));
+        safe_fclose(f, path);
+        return -1;
+    }
+    
+    if (safe_fclose(f, path) < 0) return -1;
+    
+    log_debug("Wrote mode: %s", mode);
+    return 0;
+}
+
+/* Write orientation to kernel module sysfs */
+static int write_orientation(const char *orientation)
+{
+    char path[PATH_MAX];
+    FILE *f;
+    
+    if ((size_t)snprintf(path, sizeof(path), "%s/orientation", cfg.sysfs_base) >= sizeof(path)) {
+        log_error("Path too long for orientation");
+        return -1;
+    }
+    
+    f = safe_fopen(path, "w");
+    if (!f) return -1;
+    
+    if (fprintf(f, "%s\n", orientation) < 0) {
+        log_error("Failed to write orientation to %s: %s", path, strerror(errno));
+        safe_fclose(f, path);
+        return -1;
+    }
+    
+    if (safe_fclose(f, path) < 0) return -1;
+    
+    log_debug("Wrote orientation: %s", orientation);
+    return 0;
+}
+
 /* Validate that paths exist and are accessible */
 static int validate_paths(void)
 {
@@ -534,6 +586,25 @@ static int get_device_orientation(double x, double y, double z) {
     }
 }
 
+/* Map device orientation to standard platform terms */
+/* Uses lid sensor orientation to determine screen orientation */
+static const char* get_platform_orientation(int orientation_code) {
+    switch (orientation_code) {
+        case 3:  /* X-down - normal laptop landscape position */
+            return "landscape";
+        case 0:  /* X-up - laptop upside down landscape */
+            return "landscape-flipped";
+        case 1:  /* Y-up - laptop standing vertically (portrait) */
+            return "portrait";
+        case 4:  /* Y-down - laptop standing vertically (portrait-flipped) */
+            return "portrait-flipped";
+        case 2:  /* Z-up - unusual orientation, default to landscape */
+        case 5:  /* Z-down - unusual orientation, default to landscape */
+        default:
+            return "landscape";  /* Default to landscape for edge cases */
+    }
+}
+
 /* Calculate hinge angle from base and lid accelerometer readings */
 /* Uses orientation-aware calculation to work in any laptop orientation */
 static double calculate_hinge_angle(const struct accel_sample *base, const struct accel_sample *lid) {
@@ -615,35 +686,43 @@ static double calculate_hinge_angle(const struct accel_sample *base, const struc
     lid_proj[0] /= lid_proj_mag;
     lid_proj[1] /= lid_proj_mag;
     lid_proj[2] /= lid_proj_mag;
-    
-    /* Calculate dot product of projected vectors */
+
+    /* Calculate both dot product and cross product for full 0-360° range */
     double dot_product = base_proj[0]*lid_proj[0] + base_proj[1]*lid_proj[1] + base_proj[2]*lid_proj[2];
     
-    /* Clamp to avoid numerical errors */
-    if (dot_product > 1.0) dot_product = 1.0;
-    if (dot_product < -1.0) dot_product = -1.0;
+    /* Calculate cross product (we only need the Y component since we're in X-Z plane) */
+    /* Cross product in X-Z plane: (a1, 0, a3) × (b1, 0, b3) = (0, a3*b1 - a1*b3, 0) */
+    double cross_y = base_proj[2]*lid_proj[0] - base_proj[0]*lid_proj[2];
     
-    /* Calculate angle in degrees */
-    double angle_rad = acos(dot_product);
+    /* Use atan2 to get full 0-360° range */
+    double angle_rad = atan2(cross_y, dot_product);
     double angle_deg = angle_rad * 180.0 / M_PI;
     
+    /* Ensure angle is in 0-360° range */
+    if (angle_deg < 0) {
+        angle_deg += 360.0;
+    }
+    
+    log_debug("Hinge calculation: dot=%.3f, cross_y=%.3f, angle=%.1f°", 
+             dot_product, cross_y, angle_deg);
+
     return angle_deg;
 }
 
 /* Get laptop mode based on hinge angle */
 static const char* get_laptop_mode(double angle) {
     if (angle < 0) {
-        return "INVALID";
-    } else if (angle >= 0 && angle < 45) {
-        return "CLOSED";        /* 0-45: Closed/nearly closed */
-    } else if (angle >= 45 && angle < 135) {
-        return "LAPTOP";        /* 45-135: Normal laptop mode (~90 degrees) */
+        return "laptop";        /* Invalid angle - default to laptop */
+    } else if (angle >= 0 && angle < 30) {
+        return "closing";       /* 0-30: Closing/nearly closed */
+    } else if (angle >= 30 && angle < 135) {
+        return "laptop";        /* 30-135: Normal laptop mode (~90 degrees) */
     } else if (angle >= 135 && angle < 225) {
-        return "FLAT";          /* 135-225: Flat/tablet mode (~180 degrees) */
+        return "flat";          /* 135-225: Flat/tablet mode (~180 degrees) */
     } else if (angle >= 225 && angle < 315) {
-        return "REVERSE";       /* 225-315: Reverse L (~270 degrees) */
+        return "tent";          /* 225-315: Tent mode (~270 degrees) */
     } else {
-        return "FOLDED";        /* 315-360: Fully folded */
+        return "tablet";        /* 315-360: Fully folded tablet */
     }
 }
 
@@ -784,11 +863,25 @@ static int run_feeder(void)
             double angle = calculate_hinge_angle(&base_sample, &lid_sample);
             const char* mode = get_laptop_mode(angle);
             
+            /* Get device orientation from lid sensor (screen orientation) */
+            int lid_orientation = get_device_orientation(lid_sample.x, lid_sample.y, lid_sample.z);
+            const char* orientation = get_platform_orientation(lid_orientation);
+            
             if (angle >= 0) {
-                log_info("Hinge angle: %.1f° (%s) - Base[%d,%d,%d] Lid[%d,%d,%d]", 
-                        angle, mode,
+                log_info("Hinge angle: %.1f° (%s) - Lid orientation code: %d (%s) - Base[%d,%d,%d] Lid[%d,%d,%d]", 
+                        angle, mode, lid_orientation, orientation,
                         base_sample.x, base_sample.y, base_sample.z,
                         lid_sample.x, lid_sample.y, lid_sample.z);
+                
+                /* Write detected mode to kernel module */
+                if (write_mode(mode) < 0) {
+                    log_warn("Failed to write mode '%s' to kernel module", mode);
+                }
+                
+                /* Write detected orientation to kernel module */
+                if (write_orientation(orientation) < 0) {
+                    log_warn("Failed to write orientation '%s' to kernel module", orientation);
+                }
             }
             
             /* Reset valid flags - we'll calculate again when new data arrives */

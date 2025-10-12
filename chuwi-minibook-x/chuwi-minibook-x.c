@@ -204,6 +204,12 @@ static int cur_tablet = 0;
 /** @last_angle: Last computed hinge angle in degrees */
 static unsigned int last_angle = 0;
 
+/** @current_mode: Current device mode string */
+static char current_mode[16] = "laptop";
+
+/** @current_orientation: Current device orientation string */
+static char current_orientation[32] = "portrait";
+
 /*
  * Hinge angle calculation parameters
  */
@@ -414,17 +420,100 @@ static ssize_t show_iio_lid_device(struct kobject *kobj, struct kobj_attribute *
 	}
 }
 
+/**
+ * show_mode - Show current device mode
+ */
+static ssize_t show_mode(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
+{
+	return snprintf(buf, PAGE_SIZE, "%s\n", current_mode);
+}
+
+/**
+ * store_mode - Set device mode with validation
+ */
+static ssize_t store_mode(struct kobject *kobj, struct kobj_attribute *attr,
+			  const char *buf, size_t len)
+{
+	char mode_str[16];
+	int ret;
+	
+	/* Copy and trim whitespace */
+	ret = sscanf(buf, "%15s", mode_str);
+	if (ret != 1)
+		return -EINVAL;
+	
+	/* Validate mode */
+	if (strcmp(mode_str, "closing") != 0 &&
+	    strcmp(mode_str, "laptop") != 0 &&
+	    strcmp(mode_str, "flat") != 0 &&
+	    strcmp(mode_str, "tent") != 0 &&
+	    strcmp(mode_str, "tablet") != 0) {
+		return -EINVAL;
+	}
+	
+	/* Update current mode */
+	mutex_lock(&tm_lock);
+	strncpy(current_mode, mode_str, sizeof(current_mode) - 1);
+	current_mode[sizeof(current_mode) - 1] = '\0';
+	mutex_unlock(&tm_lock);
+	
+	return len;
+}
+
+/**
+ * show_orientation - Show current device orientation
+ */
+static ssize_t show_orientation(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
+{
+	return snprintf(buf, PAGE_SIZE, "%s\n", current_orientation);
+}
+
+/**
+ * store_orientation - Set device orientation with validation
+ */
+static ssize_t store_orientation(struct kobject *kobj, struct kobj_attribute *attr,
+				 const char *buf, size_t len)
+{
+	char orientation_str[32];
+	int ret;
+	
+	/* Copy and trim whitespace */
+	ret = sscanf(buf, "%31s", orientation_str);
+	if (ret != 1)
+		return -EINVAL;
+	
+	/* Validate orientation - using standard iOS/Windows terms */
+	if (strcmp(orientation_str, "portrait") != 0 &&
+	    strcmp(orientation_str, "landscape") != 0 &&
+	    strcmp(orientation_str, "portrait-flipped") != 0 &&
+	    strcmp(orientation_str, "landscape-flipped") != 0) {
+		return -EINVAL;
+	}
+	
+	/* Update current orientation */
+	mutex_lock(&tm_lock);
+	strncpy(current_orientation, orientation_str, sizeof(current_orientation) - 1);
+	current_orientation[sizeof(current_orientation) - 1] = '\0';
+	mutex_unlock(&tm_lock);
+	
+	return len;
+}
+
 /* Basic attribute definitions */
 static struct kobj_attribute base_vec_attr = __ATTR(base_vec, 0644, show_base_vec, store_base_vec);
 static struct kobj_attribute lid_vec_attr = __ATTR(lid_vec, 0644, show_lid_vec, store_lid_vec);
 static struct kobj_attribute iio_base_device_attr = __ATTR(iio_base_device, 0444, show_iio_base_device, NULL);
 static struct kobj_attribute iio_lid_device_attr = __ATTR(iio_lid_device, 0444, show_iio_lid_device, NULL);
+static struct kobj_attribute mode_attr = __ATTR(mode, 0644, show_mode, store_mode);
+static struct kobj_attribute orientation_attr = __ATTR(orientation, 0644, show_orientation, store_orientation);
 
 static struct attribute *tablet_mode_attrs[] = {
 	&base_vec_attr.attr,
 	&lid_vec_attr.attr,
 	&iio_base_device_attr.attr,
 	&iio_lid_device_attr.attr,
+	&mode_attr.attr,
+	&orientation_attr.attr,
 	NULL,
 };
 
