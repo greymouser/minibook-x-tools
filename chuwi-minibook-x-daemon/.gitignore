@@ -1,5 +1,5 @@
 # Build products
-chuwi-minibook-x-daemon
+/chuwi-minibook-x-daemon
 *.o
 *.so
 *.a
