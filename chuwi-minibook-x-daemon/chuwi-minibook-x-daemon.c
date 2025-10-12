@@ -8,6 +8,8 @@
  * Copyright (c) 2025 Armando DiCianno <armando@noonshy.com>
  */
 
+#define _GNU_SOURCE
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -533,7 +535,7 @@ static int get_device_orientation(double x, double y, double z) {
 }
 
 /* Calculate hinge angle from base and lid accelerometer readings */
-/* Uses cross-product to find dynamic hinge axis, enhanced with orientation tracking */
+/* Uses orientation-aware calculation to work in any laptop orientation */
 static double calculate_hinge_angle(const struct accel_sample *base, const struct accel_sample *lid) {
     /* Convert raw accelerometer values to normalized vectors */
     double base_magnitude = sqrt(base->x * base->x + base->y * base->y + base->z * base->z);
@@ -556,32 +558,66 @@ static double calculate_hinge_angle(const struct accel_sample *base, const struc
         lid->z / lid_magnitude
     };
     
-    /* Calculate cross product to find hinge axis direction */
-    double hinge_axis[3];
-    hinge_axis[0] = base_norm[1]*lid_norm[2] - base_norm[2]*lid_norm[1];
-    hinge_axis[1] = base_norm[2]*lid_norm[0] - base_norm[0]*lid_norm[2];
-    hinge_axis[2] = base_norm[0]*lid_norm[1] - base_norm[1]*lid_norm[0];
+    /* Get orientations to determine current laptop position */
+    int base_orientation = get_device_orientation(base->x, base->y, base->z);
+    // Note: lid_orientation available for future use
     
-    /* Normalize the hinge axis */
-    double hinge_mag = sqrt(hinge_axis[0]*hinge_axis[0] + hinge_axis[1]*hinge_axis[1] + hinge_axis[2]*hinge_axis[2]);
-    if (hinge_mag < 1e-6) {
-        /* Vectors are parallel, use simple dot product */
+    /* Debug: Show raw values and orientation calculation */
+    double abs_x = fabs(base->x);
+    double abs_y = fabs(base->y);
+    double abs_z = fabs(base->z);
+    log_debug("Raw base values: X=%d Y=%d Z=%d, Abs values: X=%.1f Y=%.1f Z=%.1f", 
+             base->x, base->y, base->z, abs_x, abs_y, abs_z);
+    log_debug("Orientation decision: abs_z > abs_x && abs_z > abs_y = %s, abs_y > abs_x = %s", 
+             (abs_z > abs_x && abs_z > abs_y) ? "true" : "false",
+             (abs_y > abs_x) ? "true" : "false");
+    
+    /* The hinge physically runs along the Y-axis (left-right) of the laptop.
+     * The key insight: Y is ALWAYS the physical hinge axis regardless of laptop orientation.
+     * For proper hinge angle calculation, we should always project onto the X-Z plane
+     * (perpendicular to the hinge axis) to measure the actual hinge movement.
+     * 
+     * The previous orientation-based approach was wrong because it assumed the projection
+     * plane should change based on gravity, but the physical hinge axis never changes.
+     */
+    
+    double base_proj[3], lid_proj[3];
+    
+    /* Always project onto X-Z plane (remove Y component) since Y is the hinge axis */
+    log_debug("Using X-Z plane projection (removing Y component), base_orientation=%d", base_orientation);
+    base_proj[0] = base_norm[0];
+    base_proj[1] = 0.0;  /* Remove Y component - this is the hinge axis */
+    base_proj[2] = base_norm[2];
+    lid_proj[0] = lid_norm[0];
+    lid_proj[1] = 0.0;   /* Remove Y component - this is the hinge axis */
+    lid_proj[2] = lid_norm[2];
+    
+    /* Normalize the projected vectors */
+    double base_proj_mag = sqrt(base_proj[0]*base_proj[0] + base_proj[1]*base_proj[1] + base_proj[2]*base_proj[2]);
+    double lid_proj_mag = sqrt(lid_proj[0]*lid_proj[0] + lid_proj[1]*lid_proj[1] + lid_proj[2]*lid_proj[2]);
+    
+    log_debug("Projected vectors - Base[%.3f,%.3f,%.3f] mag=%.3f, Lid[%.3f,%.3f,%.3f] mag=%.3f", 
+             base_proj[0], base_proj[1], base_proj[2], base_proj_mag,
+             lid_proj[0], lid_proj[1], lid_proj[2], lid_proj_mag);
+    
+    if (base_proj_mag < 1e-6 || lid_proj_mag < 1e-6) {
+        /* Fallback to simple dot product if projection fails */
+        log_debug("Projection failed, using fallback dot product");
         double dot_product = base_norm[0]*lid_norm[0] + base_norm[1]*lid_norm[1] + base_norm[2]*lid_norm[2];
         if (dot_product > 1.0) dot_product = 1.0;
         if (dot_product < -1.0) dot_product = -1.0;
         return acos(dot_product) * 180.0 / M_PI;
     }
     
-    hinge_axis[0] /= hinge_mag;
-    hinge_axis[1] /= hinge_mag;
-    hinge_axis[2] /= hinge_mag;
+    base_proj[0] /= base_proj_mag;
+    base_proj[1] /= base_proj_mag;
+    base_proj[2] /= base_proj_mag;
+    lid_proj[0] /= lid_proj_mag;
+    lid_proj[1] /= lid_proj_mag;
+    lid_proj[2] /= lid_proj_mag;
     
-    /* Get orientations for future use in screen orientation reporting */
-    int base_orientation = get_device_orientation(base->x, base->y, base->z);
-    int lid_orientation = get_device_orientation(lid->x, lid->y, lid->z);
-    
-    /* Calculate dot product for angle */
-    double dot_product = base_norm[0]*lid_norm[0] + base_norm[1]*lid_norm[1] + base_norm[2]*lid_norm[2];
+    /* Calculate dot product of projected vectors */
+    double dot_product = base_proj[0]*lid_proj[0] + base_proj[1]*lid_proj[1] + base_proj[2]*lid_proj[2];
     
     /* Clamp to avoid numerical errors */
     if (dot_product > 1.0) dot_product = 1.0;
@@ -590,12 +626,6 @@ static double calculate_hinge_angle(const struct accel_sample *base, const struc
     /* Calculate angle in degrees */
     double angle_rad = acos(dot_product);
     double angle_deg = angle_rad * 180.0 / M_PI;
-    
-    /* Note: We now have orientation information available for both base and lid.
-     * This can be used in the future to determine screen orientation and improve
-     * hinge angle calculation based on current device orientation.
-     * For now, the cross-product method works well in normal laptop orientations.
-     */
     
     return angle_deg;
 }
