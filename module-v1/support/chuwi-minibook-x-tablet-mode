@@ -1,6 +1,0 @@
-# Which IIO devices to use (names under /sys/bus/iio/devices/)
-BASE_IIO=iio:device0
-LID_IIO=iio:device1
-
-# Poll period in ms
-POLL_MS=100
