@@ -1,10 +1,7 @@
-# Build products
+# Build products (daemon-specific)
 /chuwi-minibook-x-daemon
-*.o
-*.so
-*.a
 
-# Debug files
+# Debug files (daemon-specific)
 *.dSYM/
 *.su
 *.idb
@@ -14,22 +11,9 @@
 core
 core.*
 
-# Temporary files
-*.tmp
-*.swp
-*.swo
-*~
-
-# Log files
+# Log files (daemon-specific)
 *.log
 
-# IDE/Editor files
-.vscode/
-.idea/
-*.sublime-*
+# IDE/Editor files (daemon-specific)
 .clangd/
 compile_commands.json
-
-# System files
-.DS_Store
-Thumbs.db

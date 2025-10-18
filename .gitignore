@@ -10,18 +10,23 @@ modules.order
 .tmp_versions/
 kernel/
 
-# Compiled object files
-*.o
+# Compiled object files (project-wide)
 *.a
 *.so
 
-# Editor and IDE files
+# Editor and IDE files (project-wide)
 .vscode/
+.idea/
 *.swp
 *.swo
+*.sublime-*
 *~
 
-# Temporary files
+# Temporary files (project-wide)
 *.tmp
 *.bak
 *.orig
+
+# System files
+.DS_Store
+Thumbs.db

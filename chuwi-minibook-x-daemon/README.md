@@ -72,8 +72,8 @@ systemctl status chuwi-minibook-x-tablet-mode
 
 Monitor tablet mode events:
 ```bash
-# Watch tablet mode state
-cat /sys/kernel/chuwi-minibook-x-tablet-mode/tablet_state
+# Watch tablet mode mode attribute
+cat /sys/devices/platform/chuwi-minibook-x/mode
 
 # Monitor input events
 evtest /dev/input/eventX  # Find correct event device
@@ -84,7 +84,7 @@ evtest /dev/input/eventX  # Find correct event device
 1. **Verify IIO devices**: `ls /sys/bus/iio/devices/`
 2. **Check mount matrices**: `cat /sys/bus/iio/devices/iio:device*/in_accel_mount_matrix`
 3. **Verify kernel module**: `lsmod | grep chuwi`
-4. **Check sysfs interface**: `ls /sys/kernel/chuwi-minibook-x-tablet-mode/`
+4. **Check sysfs interface**: `ls /sys/devices/platform/chuwi-minibook-x/`
 
 ## Development Notes
 

@@ -78,7 +78,7 @@ Default:
 The wrapper implements intelligent waiting for system readiness:
 .SS Kernel Module Wait
 Waits up to 30 seconds (60 × 0.5s) for:
-.I /sys/kernel/chuwi-minibook-x-tablet-mode/base_vec
+.I /sys/devices/platform/chuwi-minibook-x/base_vec
 .SS IIO Device Wait  
 Waits up to 30 seconds for each IIO device's accelerometer interface:
 .I /sys/bus/iio/devices/*/in_accel_x_raw
@@ -106,7 +106,7 @@ Wrapper script executable
 .I /etc/default/chuwi-minibook-x-tablet-mode
 Configuration file with environment variables
 .TP
-.I /sys/kernel/chuwi-minibook-x-tablet-mode/
+.I /sys/devices/platform/chuwi-minibook-x/
 Kernel module sysfs interface (must exist)
 .TP
 .I /sys/bus/iio/devices/iio:device*/name
@@ -157,7 +157,7 @@ Test device detection manually:
 .B done
 
 .B # Verify kernel module
-.B ls -la /sys/kernel/chuwi-minibook-x-tablet-mode/
+.B ls -la /sys/devices/platform/chuwi-minibook-x/
 .fi
 .SH ENVIRONMENT
 The wrapper uses the following environment variables (typically set via the configuration file):
@@ -200,7 +200,7 @@ Standard Unix utilities (grep, basename, dirname)
 Access to
 .I /sys/bus/iio/devices/
 and
-.I /sys/kernel/chuwi-minibook-x-tablet-mode/
+.I /sys/devices/platform/chuwi-minibook-x/
 .SH BUGS
 Report bugs to the project issue tracker or contact the author.
 .PP

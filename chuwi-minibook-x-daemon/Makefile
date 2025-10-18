@@ -93,7 +93,6 @@ install-doc: $(DOCFILES)
 uninstall:
 	@echo "Uninstalling $(PROGRAM_NAME)..."
 	rm -f $(DESTDIR)$(BINDIR)/$(PROGRAM_NAME)
-	rm -rf $(DESTDIR)$(LIBEXECDIR)
 	rm -f $(DESTDIR)$(SYSTEMDDIR)/$(PROGRAM_NAME).service
 	rm -f $(DESTDIR)$(MANDIR)/man8/$(PROGRAM_NAME).8
 	rm -rf $(DESTDIR)$(PREFIX)/share/doc/$(PROGRAM_NAME)

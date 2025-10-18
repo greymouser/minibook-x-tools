@@ -10,7 +10,8 @@ set -euo pipefail
 SCRIPT_NAME="$(basename "$0")"
 PROGRAM_NAME="chuwi-minibook-x-tablet-mode"
 CONFIG_FILE="/etc/default/$PROGRAM_NAME"
-SYSFS_BASE="/sys/kernel/chuwi-minibook-x-tablet-mode"
+# Default sysfs base path
+SYSFS_BASE="/sys/devices/platform/chuwi-minibook-x"
 
 # Colors for output
 RED='\033[0;31m'
