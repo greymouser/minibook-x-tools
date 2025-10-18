@@ -1,5 +1,5 @@
 # Build artifacts
-tablet-mode-daemon
+/tablet-mode-daemon
 *.o
 *.ko
 *.mod
