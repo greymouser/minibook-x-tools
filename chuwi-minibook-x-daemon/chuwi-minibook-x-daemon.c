@@ -8,8 +8,6 @@
  * Copyright (c) 2025 Armando DiCianno <armando@noonshy.com>
  */
 
-#define _GNU_SOURCE
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -142,87 +140,6 @@ static int safe_fclose(FILE *f, const char *path)
         log_error("Failed to close %s: %s", path, strerror(errno));
         return -1;
     }
-    return 0;
-}
-
-/* Read raw accelerometer axis from IIO sysfs */
-static int read_iio_axis(const char *dev, const char *axis, int *out)
-{
-    char path[PATH_MAX];
-    char buf[64];
-    FILE *f;
-    char *endptr;
-    long value;
-    
-    if ((size_t)snprintf(path, sizeof(path), "/sys/bus/iio/devices/%s/in_accel_%s_raw", 
-                 dev, axis) >= sizeof(path)) {
-        log_error("Path too long for device %s axis %s", dev, axis);
-        return -1;
-    }
-    
-    f = safe_fopen(path, "r");
-    if (!f) return -1;
-    
-    if (!fgets(buf, sizeof(buf), f)) {
-        log_error("Failed to read from %s: %s", path, strerror(errno));
-        safe_fclose(f, path);
-        return -1;
-    }
-    
-    safe_fclose(f, path);
-    
-    errno = 0;
-    value = strtol(buf, &endptr, 10);
-    
-    if (errno != 0 || endptr == buf || value > INT_MAX || value < INT_MIN) {
-        log_error("Invalid value in %s: '%s'", path, buf);
-        return -1;
-    }
-    
-    *out = (int)value;
-    log_debug("Read %s/%s: %d", dev, axis, *out);
-    return 0;
-}
-
-/* Read accelerometer scale factor */
-static int read_iio_scale(const char *dev, double *scale)
-{
-    char path[PATH_MAX];
-    FILE *f;
-    
-    if ((size_t)snprintf(path, sizeof(path), "/sys/bus/iio/devices/%s/in_accel_scale", 
-                 dev) >= sizeof(path)) {
-        log_error("Path too long for device %s scale", dev);
-        return -1;
-    }
-    
-    f = safe_fopen(path, "r");
-    if (!f) {
-        /* Scale file is optional */
-        *scale = 0.0;
-        return 0;
-    }
-    
-    if (fscanf(f, "%lf", scale) != 1) {
-        log_warn("Failed to read scale from %s", path);
-        *scale = 0.0;
-    }
-    
-    safe_fclose(f, path);
-    log_debug("Read %s scale: %f", dev, *scale);
-    return 0;
-}
-
-/* Read all axes from an IIO device */
-static int read_iio_device(const char *dev, int *x, int *y, int *z, double *scale)
-{
-    if (read_iio_axis(dev, "x", x) < 0 ||
-        read_iio_axis(dev, "y", y) < 0 ||
-        read_iio_axis(dev, "z", z) < 0) {
-        return -1;
-    }
-    
-    read_iio_scale(dev, scale);
     return 0;
 }
 
@@ -365,7 +282,6 @@ static int parse_accel_value(const uint8_t *data) {
 /* Setup IIO buffer for a device */
 static int setup_iio_buffer(struct iio_buffer *buf, const char *device_name) {
     char path[PATH_MAX];
-    char buffer[256];
     FILE *fp;
     
     memset(buf, 0, sizeof(*buf));
@@ -550,7 +466,7 @@ static void cleanup_iio_buffer(struct iio_buffer *buf) {
     snprintf(path, sizeof(path), "/sys/bus/iio/devices/%s/trigger/current_trigger", buf->device_name);
     fp = fopen(path, "w");
     if (fp) {
-        fprintf(fp, "");
+        fprintf(fp, "\n");
         fclose(fp);
     }
     
@@ -634,9 +550,9 @@ static double calculate_hinge_angle(const struct accel_sample *base, const struc
     // Note: lid_orientation available for future use
     
     /* Debug: Show raw values and orientation calculation */
-    double abs_x = fabs(base->x);
-    double abs_y = fabs(base->y);
-    double abs_z = fabs(base->z);
+    double abs_x = abs(base->x);
+    double abs_y = abs(base->y);
+    double abs_z = abs(base->z);
     log_debug("Raw base values: X=%d Y=%d Z=%d, Abs values: X=%.1f Y=%.1f Z=%.1f", 
              base->x, base->y, base->z, abs_x, abs_y, abs_z);
     log_debug("Orientation decision: abs_z > abs_x && abs_z > abs_y = %s, abs_y > abs_x = %s", 
@@ -959,7 +875,10 @@ static int read_kernel_device_assignments(void)
     log_info("Reading device assignments from kernel module...");
     
     /* Read base device assignment */
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wformat-truncation"
     snprintf(path, sizeof(path), "%s/iio_base_device", cfg.sysfs_base);
+#pragma GCC diagnostic pop
     fp = safe_fopen(path, "r");
     if (!fp) {
         log_warn("Cannot read base device assignment from %s", path);
@@ -994,7 +913,10 @@ static int read_kernel_device_assignments(void)
     fclose(fp);
     
     /* Read lid device assignment */
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wformat-truncation"
     snprintf(path, sizeof(path), "%s/iio_lid_device", cfg.sysfs_base);
+#pragma GCC diagnostic pop
     fp = safe_fopen(path, "r");
     if (!fp) {
         log_warn("Cannot read lid device assignment from %s", path);
@@ -1254,7 +1176,10 @@ int main(int argc, char **argv)
     
     /* Wait for kernel module sysfs interface to be available */
     char sysfs_path[PATH_MAX];
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wformat-truncation"
     snprintf(sysfs_path, sizeof(sysfs_path), "%s/base_vec", cfg.sysfs_base);
+#pragma GCC diagnostic pop
     if (wait_for_path(sysfs_path, 30) < 0) {
         log_error("Kernel module sysfs interface not found: %s", cfg.sysfs_base);
         return 1;
