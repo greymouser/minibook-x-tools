@@ -81,7 +81,7 @@ static struct config cfg = {
     .poll_ms = 100,
     .daemon_mode = 0,
     .verbose = 0,
-    .sysfs_base = "/sys/kernel/chuwi-minibook-x-tablet-mode"
+    .sysfs_base = "/sys/devices/platform/chuwi-minibook-x"
 };
 
 /* Signal handlers */

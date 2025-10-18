@@ -1,11 +1,11 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 /*
- * Chuwi Minibook X Platform Driver
+ * Chuwi Minibook X Integrated Platform Driver
  *
- * Copyright (C) 2025 Your Name
+ * Copyright (C) 2025 Armando DiCianno
  *
- * Hardware identification and accelerometer detection driver
- * for the Chuwi Minibook X convertible laptop.
+ * Integrated hardware detection, accelerometer instantiation with mount matrices,
+ * and tablet mode detection for the Chuwi Minibook X convertible laptop.
  */
 
 #ifndef _CHUWI_MINIBOOK_X_H_
@@ -16,12 +16,12 @@
 
 #define CHUWI_MINIBOOK_X_DRIVER_NAME "chuwi-minibook-x"
 
-/* Module parameters (defined in main.c) */
+/* Module parameters (defined in chuwi-minibook-x.c) */
 extern int lid_bus;
 extern int lid_addr;
 extern int base_bus;
 extern int base_addr;
-extern bool debug_mode;
+extern bool enable_mount_matrix;
 
 /* ACPI device information structure */
 struct accel_i2c_info {
@@ -43,7 +43,7 @@ struct chuwi_minibook_x {
 	struct mutex lock;
 	
 	/* Module configuration */
-	bool enabled;
+	bool debug_mode;      /* Debug output control */
 	
 	/* Debugging */
 #ifdef CONFIG_CHUWI_MINIBOOK_X_DEBUGFS
