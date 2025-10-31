@@ -44,13 +44,6 @@ struct chuwi_minibook_x {
 	
 	/* Module configuration */
 	bool debug_mode;      /* Debug output control */
-	
-	/* Debugging */
-#ifdef CONFIG_CHUWI_MINIBOOK_X_DEBUGFS
-	struct dentry *debugfs_dir;
-	struct dentry *debugfs_raw_data;
-	struct dentry *debugfs_calculations;
-#endif
 };
 
 /* Function declarations */
@@ -62,14 +55,5 @@ void chuwi_minibook_x_remove(struct platform_device *pdev);
 /* Sysfs interface */
 int chuwi_minibook_x_create_sysfs(struct chuwi_minibook_x *chip);
 void chuwi_minibook_x_remove_sysfs(struct chuwi_minibook_x *chip);
-
-#ifdef CONFIG_CHUWI_MINIBOOK_X_DEBUGFS
-/* Debugfs interface */
-int chuwi_minibook_x_debugfs_init(struct chuwi_minibook_x *chip);
-void chuwi_minibook_x_debugfs_cleanup(struct chuwi_minibook_x *chip);
-#else
-static inline int chuwi_minibook_x_debugfs_init(struct chuwi_minibook_x *chip) { return 0; }
-static inline void chuwi_minibook_x_debugfs_cleanup(struct chuwi_minibook_x *chip) {}
-#endif
 
 #endif /* _CHUWI_MINIBOOK_X_H_ */
