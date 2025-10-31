@@ -74,10 +74,6 @@ static unsigned int default_hysteresis_deg = 10;
 module_param_named(hysteresis_deg, default_hysteresis_deg, uint, 0644);
 MODULE_PARM_DESC(hysteresis_deg, "Default hysteresis in degrees (0-90, default: 10)");
 
-static bool default_signed_mode = true;
-module_param_named(signed_mode, default_signed_mode, bool, 0644);
-MODULE_PARM_DESC(signed_mode, "Default signed angle mode (0=unsigned 0-180°, 1=signed 0-360°, default: 1)");
-
 static bool default_enabled = true;
 module_param_named(enabled, default_enabled, bool, 0644);
 MODULE_PARM_DESC(enabled, "Default polling enabled state (default: 1)");
@@ -170,9 +166,6 @@ static char current_orientation[32] = "portrait";
 /**
  * Hinge angle calculation parameters
  */
-
-/** @signed_mode: Use signed angle mode (0=0-180°, 1=0-360°) */
-static int signed_mode = 1;
 
 /** @poll_work: Delayed work queue for periodic polling */
 static struct delayed_work poll_work;
@@ -269,7 +262,6 @@ static void init_module_defaults(void)
 	}
 	hysteresis_deg = default_hysteresis_deg;
 
-	signed_mode = default_signed_mode ? 1 : 0;
 	enabled = default_enabled ? 1 : 0;
 }
 
