@@ -56,22 +56,6 @@ MODULE_SOFTDEP("pre: mxc4005");
 MODULE_SOFTDEP("pre: serial_multi_instantiate");
 
 /* Module parameters for hardware configuration */
-int lid_bus = 13;
-module_param(lid_bus, int, 0644);
-MODULE_PARM_DESC(lid_bus, "I2C bus number for lid accelerometer (default: 13)");
-
-int lid_addr = 0x15;
-module_param(lid_addr, int, 0644);
-MODULE_PARM_DESC(lid_addr, "I2C address for lid accelerometer (default: 0x15)");
-
-int base_bus = 12;
-module_param(base_bus, int, 0644);
-MODULE_PARM_DESC(base_bus, "I2C bus number for base accelerometer (default: 12)");
-
-int base_addr = 0x15;
-module_param(base_addr, int, 0644);
-MODULE_PARM_DESC(base_addr, "I2C address for base accelerometer (default: 0x15)");
-
 bool enable_mount_matrix = true;
 module_param(enable_mount_matrix, bool, 0644);
 MODULE_PARM_DESC(enable_mount_matrix, "Enable automatic mount matrix transformation (default: true)");
@@ -234,6 +218,25 @@ static int instantiated_addr = -1;
 static int instantiated_bus2 = -1;
 static int instantiated_addr2 = -1;
 
+/* Storage for discovered hardware locations */
+struct discovered_device_location {
+    int bus_nr;
+    int addr;
+    bool detected;
+    bool used;  /* Track if this location has been used for instantiation */
+};
+
+static struct discovered_device_location discovered_devices[4];
+static int discovered_device_count = 0;
+
+/* Device information structures for accelerometers */
+struct mxc4005_device_info {
+    struct i2c_client *client;
+    int bus_num;
+    int addr;
+    bool is_working;
+};
+
 /**
  * DMI table for supported hardware
  */
@@ -391,38 +394,6 @@ static ssize_t store_lid_vec(struct kobject *k, struct kobj_attribute *a,
 }
 
 /**
- * show_iio_base_device - Show IIO device name for base accelerometer
- */
-static ssize_t show_iio_base_device(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
-{
-	/* Base is typically on i2c-12, which usually maps to iio:device1 */
-	if (base_bus == 12) {
-		return snprintf(buf, PAGE_SIZE, "iio:device1\n");
-	} else if (base_bus == 13) {
-		return snprintf(buf, PAGE_SIZE, "iio:device0\n");
-	} else {
-		/* Fallback - provide I2C info for userspace to resolve */
-		return snprintf(buf, PAGE_SIZE, "i2c-%d:0x%02x\n", base_bus, base_addr);
-	}
-}
-
-/**
- * show_iio_lid_device - Show IIO device name for lid accelerometer  
- */
-static ssize_t show_iio_lid_device(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
-{
-	/* Lid is typically on i2c-13, which usually maps to iio:device0 */
-	if (lid_bus == 13) {
-		return snprintf(buf, PAGE_SIZE, "iio:device0\n");
-	} else if (lid_bus == 12) {
-		return snprintf(buf, PAGE_SIZE, "iio:device1\n");
-	} else {
-		/* Fallback - provide I2C info for userspace to resolve */
-		return snprintf(buf, PAGE_SIZE, "i2c-%d:0x%02x\n", lid_bus, lid_addr);
-	}
-}
-
-/**
  * show_mode - Show current device mode
  */
 static ssize_t show_mode(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
@@ -522,16 +493,12 @@ static ssize_t store_orientation(struct kobject *kobj, struct kobj_attribute *at
 /* Basic attribute definitions */
 static struct kobj_attribute base_vec_attr = __ATTR(base_vec, 0644, show_base_vec, store_base_vec);
 static struct kobj_attribute lid_vec_attr = __ATTR(lid_vec, 0644, show_lid_vec, store_lid_vec);
-static struct kobj_attribute iio_base_device_attr = __ATTR(iio_base_device, 0444, show_iio_base_device, NULL);
-static struct kobj_attribute iio_lid_device_attr = __ATTR(iio_lid_device, 0444, show_iio_lid_device, NULL);
 static struct kobj_attribute mode_attr = __ATTR(mode, 0644, show_mode, store_mode);
 static struct kobj_attribute orientation_attr = __ATTR(orientation, 0644, show_orientation, store_orientation);
 
 static struct attribute *tablet_mode_attrs[] = {
 	&base_vec_attr.attr,
 	&lid_vec_attr.attr,
-	&iio_base_device_attr.attr,
-	&iio_lid_device_attr.attr,
 	&mode_attr.attr,
 	&orientation_attr.attr,
 	NULL,
@@ -546,7 +513,7 @@ static struct attribute_group tablet_mode_attr_group = {
  */
 
 /**
- * struct device_search_ctx - Context for finding existing I2C devices
+ * struct device_search_ctx - Context for device search operations
  * @target_bus: I2C bus number to search
  * @target_addr: I2C address to search for
  * @found_client: Pointer to found I2C client (output)
@@ -556,56 +523,6 @@ struct device_search_ctx {
 	int target_addr;
 	struct i2c_client *found_client;
 };
-
-/**
- * chuwi_minibook_x_find_device_callback - Callback to find specific I2C device
- */
-static int chuwi_minibook_x_find_device_callback(struct device *dev, void *data)
-{
-	struct device_search_ctx *ctx = (struct device_search_ctx *)data;
-	struct i2c_client *client;
-	
-	/* Only process I2C client devices, not adapters or other device types */
-	if (dev->type != &i2c_client_type)
-		return 0;
-	
-	client = to_i2c_client(dev);
-	if (!client || !client->adapter)
-		return 0;
-	
-	/* Check if this device matches our target bus and address */
-	if (client->adapter->nr == ctx->target_bus && client->addr == ctx->target_addr) {
-		/* Only consider devices with the mxc4005 driver */
-		if (client->dev.driver && strcmp(client->dev.driver->name, "mxc4005") == 0) {
-			ctx->found_client = client;
-			return 1; /* Found it, stop iteration */
-		}
-	}
-	
-	return 0;
-}
-
-/**
- * chuwi_minibook_x_find_existing_device - Find existing I2C device on specified bus/address
- */
-static struct i2c_client *chuwi_minibook_x_find_existing_device(int bus_nr, int addr)
-{
-	struct device_search_ctx ctx = {
-		.target_bus = bus_nr,
-		.target_addr = addr,
-		.found_client = NULL
-	};
-	
-	/* Search through I2C bus devices */
-	bus_for_each_dev(&i2c_bus_type, NULL, &ctx, chuwi_minibook_x_find_device_callback);
-	
-	if (ctx.found_client && g_chip && g_chip->debug_mode) {
-		pr_info(DRV_NAME ": Found existing device on i2c-%d:0x%02x (driver: %s)\n",
-			bus_nr, addr, ctx.found_client->dev.driver ? ctx.found_client->dev.driver->name : "none");
-	}
-	
-	return ctx.found_client;
-}
 
 /**
  * chuwi_minibook_x_apply_mount_matrix_to_existing - Apply mount matrix to existing device
@@ -785,6 +702,68 @@ static bool chuwi_minibook_x_probe_i2c_address(int bus_nr, int addr)
 }
 
 /**
+ * Helper function to check if a client matches our search criteria
+ */
+static int chuwi_minibook_x_device_iterator(struct device *dev, void *data)
+{
+	struct device_search_ctx *ctx = data;
+	struct i2c_client *client;
+	
+	if (dev->type != &i2c_client_type)
+		return 0;
+	
+	client = to_i2c_client(dev);
+	if (client->adapter->nr == ctx->target_bus && client->addr == ctx->target_addr) {
+		ctx->found_client = client;
+		return 1; /* Stop iteration */
+	}
+	
+	return 0; /* Continue iteration */
+}
+
+/**
+ * chuwi_minibook_x_find_device_on_bus - Check if I2C client exists at bus:address
+ * 
+ * This function checks if there's already an I2C client bound at the given
+ * I2C bus and address to prevent conflicts. It only considers bound clients,
+ * not just hardware that responds to I2C.
+ */
+static struct i2c_client *chuwi_minibook_x_find_device_on_bus(int bus_nr, int addr)
+{
+	struct device_search_ctx ctx = {
+		.target_bus = bus_nr,
+		.target_addr = addr,
+		.found_client = NULL
+	};
+	
+	/* Search all I2C devices for an existing client at this bus:address */
+	bus_for_each_dev(&i2c_bus_type, NULL, &ctx, chuwi_minibook_x_device_iterator);
+	
+	if (ctx.found_client) {
+		pr_info(DRV_NAME ": I2C client already bound at i2c-%d:0x%02x - skipping instantiation\n", 
+			bus_nr, addr);
+		return ctx.found_client;
+	}
+	
+	pr_info(DRV_NAME ": No I2C client at i2c-%d:0x%02x - available for instantiation\n", 
+		bus_nr, addr);
+	return NULL; /* No bound client at this address */
+}
+
+/**
+ * chuwi_minibook_x_get_device_bus_info - Extract bus/address from working device
+ * 
+ * This function gets the actual bus and address information from a working
+ * accelerometer device to avoid hardcoded assumptions.
+ */
+static void chuwi_minibook_x_get_device_bus_info(struct device *dev, int *bus_nr, int *addr)
+{
+	struct i2c_client *client = to_i2c_client(dev);
+	*bus_nr = client->adapter->nr;
+	*addr = client->addr;
+}
+
+/**
  * chuwi_minibook_x_scan_for_accelerometers - Hardware-level accelerometer detection
  * 
  * This function scans for accelerometer hardware using multiple strategies:
@@ -806,9 +785,20 @@ static int chuwi_minibook_x_scan_for_accelerometers(void)
 	/* Strategy 2: I2C bus scanning for accelerometers at address 0x15 */
 	pr_info(DRV_NAME ": Scanning I2C buses for accelerometers at address 0x15\n");
 	
+	/* Reset discovered device list */
+	discovered_device_count = 0;
+	memset(discovered_devices, 0, sizeof(discovered_devices));
+	
 	/* Scan likely I2C bus numbers (typically 10-15 for designware controllers) */
 	for (bus_nr = 10; bus_nr <= 15; bus_nr++) {
 		if (chuwi_minibook_x_probe_i2c_address(bus_nr, 0x15)) {
+			if (discovered_device_count < ARRAY_SIZE(discovered_devices)) {
+				discovered_devices[discovered_device_count].bus_nr = bus_nr;
+				discovered_devices[discovered_device_count].addr = 0x15;
+				discovered_devices[discovered_device_count].detected = true;
+				discovered_devices[discovered_device_count].used = false;  /* Initialize as unused */
+				discovered_device_count++;
+			}
 			i2c_devices++;
 		}
 	}
@@ -832,7 +822,6 @@ static int chuwi_minibook_x_scan_for_accelerometers(void)
 	return 0;
 }
 
-/* Context structure for device discovery callback */
 struct device_discovery_ctx {
 	struct device *base_dev;
 	struct device *lid_dev;
@@ -908,6 +897,7 @@ static int chuwi_minibook_x_discover_accelerometers(void)
 	struct device *base_dev = NULL, *lid_dev = NULL;
 	struct i2c_client *base_client, *lid_client;
 	int working_count, hardware_count;
+	int working_bus = -1, working_addr = -1;
 	
 	pr_info(DRV_NAME ": Discovering accelerometer devices using robust identification\n");
 	
@@ -934,9 +924,13 @@ static int chuwi_minibook_x_discover_accelerometers(void)
 		return working_count;
 	} else if (working_count == 1) {
 		base_client = to_i2c_client(base_dev);
+		chuwi_minibook_x_get_device_bus_info(base_dev, &working_bus, &working_addr);
+		
 		pr_info(DRV_NAME ": Found 1 working accelerometer: %s on i2c-%d:0x%02x\n", 
 			base_client->name, base_client->adapter->nr, base_client->addr);
 		pr_info(DRV_NAME ": Hardware indicates %d total device(s) available\n", hardware_count);
+		
+		pr_info(DRV_NAME ": Working device detected - may need to instantiate additional device\n");
 		
 		return working_count;
 	} else {
@@ -969,6 +963,15 @@ static int chuwi_minibook_x_instantiate_mxc4005(int bus_nr, int addr, bool is_se
 	struct i2c_adapter *adapter;
 	struct i2c_board_info info = {};
 	struct i2c_client *client;
+	struct i2c_client *existing_device;
+	
+	/* Check if there's already an I2C client bound at this address */
+	existing_device = chuwi_minibook_x_find_device_on_bus(bus_nr, addr);
+	if (existing_device) {
+		pr_info(DRV_NAME ": I2C client already bound at i2c-%d:0x%02x - skipping instantiation\n", 
+			bus_nr, addr);
+		return 0; /* Device exists, don't try to create another */
+	}
 	
 	adapter = i2c_get_adapter(bus_nr);
 	if (!adapter) {
@@ -1063,69 +1066,109 @@ static int chuwi_minibook_x_setup_accelerometers(void)
 	int ret;
 	struct i2c_client *existing_lid = NULL;
 	struct i2c_client *existing_base = NULL;
-	bool lid_handled = false;
-	bool base_handled = false;
 	
 	/* FIXME: Wait for MODULE_SOFTDEP drivers to load and bind */
 	msleep(100);
 	
-	/* Check for existing devices first */
-	existing_lid = chuwi_minibook_x_find_existing_device(lid_bus, lid_addr);
-	existing_base = chuwi_minibook_x_find_existing_device(base_bus, base_addr);
+	/* First discover all accelerometer locations using hardware detection */
+	chuwi_minibook_x_discover_accelerometers();
 	
-	/* Apply mount matrices to existing devices */
-	if (existing_lid) {
-		pr_info(DRV_NAME ": Found existing lid accelerometer on i2c-%d:0x%02x\n", lid_bus, lid_addr);
-		ret = chuwi_minibook_x_apply_mount_matrix_to_existing(existing_lid, true);
-		if (ret == 0) {
-			lid_handled = true;
+	/* Device assignment tracking */
+	struct {
+		int bus_nr;
+		int addr;
+		struct i2c_client *existing_client;
+		bool handled;
+	} lid_device = {-1, -1, NULL, false}, base_device = {-1, -1, NULL, false};
+	
+	/* Sort discovered devices by bus number to ensure consistent assignment */
+	/* Higher bus number = lid, lower bus number = base */
+	if (discovered_device_count >= 2) {
+		/* Sort devices by bus number (ascending) */
+		for (int i = 0; i < discovered_device_count - 1; i++) {
+			for (int j = i + 1; j < discovered_device_count; j++) {
+				if (discovered_devices[i].bus_nr > discovered_devices[j].bus_nr) {
+					struct discovered_device_location temp = discovered_devices[i];
+					discovered_devices[i] = discovered_devices[j];
+					discovered_devices[j] = temp;
+				}
+			}
+		}
+		
+		/* Assign: higher bus number = lid, lower bus number = base */
+		base_device.bus_nr = discovered_devices[0].bus_nr;  /* Lower bus number */
+		base_device.addr = discovered_devices[0].addr;
+		lid_device.bus_nr = discovered_devices[discovered_device_count - 1].bus_nr;  /* Higher bus number */
+		lid_device.addr = discovered_devices[discovered_device_count - 1].addr;
+		
+		pr_info(DRV_NAME ": Device assignment: lid=i2c-%d:0x%02x (higher bus), base=i2c-%d:0x%02x (lower bus)\n",
+			lid_device.bus_nr, lid_device.addr, base_device.bus_nr, base_device.addr);
+	}
+	
+	/* Check for existing I2C clients at assigned locations and apply mount matrices */
+	if (lid_device.bus_nr >= 0) {
+		lid_device.existing_client = chuwi_minibook_x_find_device_on_bus(lid_device.bus_nr, lid_device.addr);
+		if (lid_device.existing_client) {
+			pr_info(DRV_NAME ": Found existing MXC4005 device for lid on i2c-%d:0x%02x\n", 
+				lid_device.bus_nr, lid_device.addr);
+			ret = chuwi_minibook_x_apply_mount_matrix_to_existing(lid_device.existing_client, true);
+			if (ret == 0) {
+				lid_device.handled = true;
+				existing_lid = lid_device.existing_client;
+			}
 		}
 	}
 	
-	if (existing_base) {
-		pr_info(DRV_NAME ": Found existing base accelerometer on i2c-%d:0x%02x\n", base_bus, base_addr);
-		ret = chuwi_minibook_x_apply_mount_matrix_to_existing(existing_base, false);
-		if (ret == 0) {
-			base_handled = true;
+	if (base_device.bus_nr >= 0) {
+		base_device.existing_client = chuwi_minibook_x_find_device_on_bus(base_device.bus_nr, base_device.addr);
+		if (base_device.existing_client) {
+			pr_info(DRV_NAME ": Found existing MXC4005 device for base on i2c-%d:0x%02x\n", 
+				base_device.bus_nr, base_device.addr);
+			ret = chuwi_minibook_x_apply_mount_matrix_to_existing(base_device.existing_client, false);
+			if (ret == 0) {
+				base_device.handled = true;
+				existing_base = base_device.existing_client;
+			}
 		}
 	}
 	
 	/* Initial count - may be 0 if devices haven't been bound yet */
 	mxc_count = chuwi_minibook_x_count_mxc4005_devices();
 	
-	pr_info(DRV_NAME ": Initially found %d MXC4005 device(s)\n", mxc_count);
+	pr_info(DRV_NAME ": Found %d existing MXC4005 device(s) with mount matrices applied\n", mxc_count);
 
-	/* Test our robust device discovery function */
-	chuwi_minibook_x_discover_accelerometers();
-
-	if (mxc_count < 2 || !lid_handled || !base_handled) {
-		pr_info(DRV_NAME ": Attempting to instantiate missing accelerometer devices\n");
-		if (g_chip && g_chip->debug_mode) {
-			pr_info(DRV_NAME ": Target configuration - Lid: i2c-%d:0x%02x, Base: i2c-%d:0x%02x\n",
-				lid_bus, lid_addr, base_bus, base_addr);
-			pr_info(DRV_NAME ": Mount matrix enabled: %s\n", enable_mount_matrix ? "yes" : "no");
-			pr_info(DRV_NAME ": Lid handled: %s, Base handled: %s\n",
-				lid_handled ? "yes" : "no", base_handled ? "yes" : "no");
+	if (mxc_count < 2 || !lid_device.handled || !base_device.handled) {
+		pr_info(DRV_NAME ": Need to instantiate devices (current: %d, lid_handled: %s, base_handled: %s)\n",
+			mxc_count, lid_device.handled ? "yes" : "no", base_device.handled ? "yes" : "no");
+		
+		/* Instantiate lid sensor if needed */
+		if (!lid_device.handled && lid_device.bus_nr >= 0) {
+			pr_info(DRV_NAME ": Instantiating lid accelerometer on discovered hardware i2c-%d addr 0x%02x\n", 
+				lid_device.bus_nr, lid_device.addr);
+			ret = chuwi_minibook_x_instantiate_mxc4005(lid_device.bus_nr, lid_device.addr, false, true);
+			if (ret == 0) {
+				lid_device.handled = true;
+				pr_info(DRV_NAME ": Lid accelerometer instantiated successfully\n");
+			} else {
+				pr_err(DRV_NAME ": Failed to instantiate lid accelerometer: %d\n", ret);
+			}
+		} else if (!lid_device.handled) {
+			pr_warn(DRV_NAME ": No available location found for lid accelerometer\n");
 		}
 		
-		/* Try to instantiate the lid accelerometer if not already handled */
-		if (!lid_handled) {
-			pr_info(DRV_NAME ": Instantiating lid accelerometer on i2c-%d addr 0x%02x\n", lid_bus, lid_addr);
-			ret = chuwi_minibook_x_instantiate_mxc4005(lid_bus, lid_addr, false, true);
-			if (ret) {
-				pr_warn(DRV_NAME ": Failed to instantiate lid accelerometer: %d\n", ret);
+		/* Instantiate base sensor if needed */
+		if (!base_device.handled && base_device.bus_nr >= 0) {
+			pr_info(DRV_NAME ": Instantiating base accelerometer on discovered hardware i2c-%d addr 0x%02x\n", 
+				base_device.bus_nr, base_device.addr);
+			ret = chuwi_minibook_x_instantiate_mxc4005(base_device.bus_nr, base_device.addr, true, false);
+			if (ret == 0) {
+				base_device.handled = true;
+				pr_info(DRV_NAME ": Base accelerometer instantiated successfully\n");
+			} else {
+				pr_err(DRV_NAME ": Failed to instantiate base accelerometer: %d\n", ret);
 			}
-			/* FIXME: Wait for I2C device registration and driver binding */
-			msleep(200);
-		}
-		
-		/* Try to instantiate the base accelerometer if not already handled */
-		if (!base_handled) {
-			pr_info(DRV_NAME ": Instantiating base accelerometer on i2c-%d addr 0x%02x\n", base_bus, base_addr);
-			ret = chuwi_minibook_x_instantiate_mxc4005(base_bus, base_addr, true, false);
-			if (ret) {
-				pr_warn(DRV_NAME ": Failed to instantiate base accelerometer: %d\n", ret);
-			}
+		} else if (!base_device.handled) {
+			pr_warn(DRV_NAME ": No available location found for base accelerometer\n");
 		}
 	} else {
 		pr_info(DRV_NAME ": All accelerometers already configured with mount matrices\n");
@@ -1137,7 +1180,9 @@ static int chuwi_minibook_x_setup_accelerometers(void)
 	pr_info(DRV_NAME ": Final accelerometer count: %d\n", mxc_count);
 	
 	return 0;
-}/**
+}
+
+/**
  * chuwi_minibook_x_init_tablet_mode - Initialize tablet mode detection system
  */
 static int chuwi_minibook_x_init_tablet_mode(struct platform_device *pdev)
