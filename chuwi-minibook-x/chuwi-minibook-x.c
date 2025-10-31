@@ -30,9 +30,6 @@
 #include <linux/math64.h>
 #include <linux/minmax.h>
 #include <linux/kobject.h>
-#ifdef CONFIG_CHUWI_MINIBOOK_X_DEBUGFS
-#include <linux/debugfs.h>
-#endif
 
 #include "chuwi-minibook-x.h"
 
@@ -119,15 +116,6 @@ static const struct property_entry base_sensor_props[] = {
 	{ }
 };
 
-/* Software nodes for device property assignment */
-static const struct software_node lid_sensor_node = {
-	.properties = lid_sensor_props,
-};
-
-static const struct software_node base_sensor_node = {
-	.properties = base_sensor_props,
-};
-
 /**
  * struct vec3 - 3D vector structure for accelerometer data (micro-g units)
  * @x: X-axis acceleration in micro-g
@@ -147,15 +135,6 @@ static struct input_dev *tm_input;
 
 /** @tm_lock: Mutex protecting global state during operations */
 static DEFINE_MUTEX(tm_lock);
-
-#ifdef CONFIG_CHUWI_MINIBOOK_X_DEBUGFS
-/** @debugfs_root: Root debugfs directory */
-static struct dentry *debugfs_root;
-/** @debugfs_raw_data: Debugfs entry for raw accelerometer data */
-static struct dentry *debugfs_raw_data;
-/** @debugfs_calculations: Debugfs entry for angle calculations */
-static struct dentry *debugfs_calculations;
-#endif
 
 /** @g_base: Current gravity vector from base accelerometer (laptop keyboard) */
 static struct vec3 g_base = { 0, 0, 1000000 };
@@ -217,6 +196,10 @@ static int instantiated_bus = -1;
 static int instantiated_addr = -1;
 static int instantiated_bus2 = -1;
 static int instantiated_addr2 = -1;
+
+/* Storage for unique software nodes to avoid sysfs conflicts */
+static struct software_node *current_lid_node = NULL;
+static struct software_node *current_base_node = NULL;
 
 /* Storage for discovered hardware locations */
 struct discovered_device_location {
@@ -525,39 +508,102 @@ struct device_search_ctx {
 };
 
 /**
+ * chuwi_minibook_x_create_unique_software_node - Create unique software node
+ * @is_lid: true for lid sensor, false for base sensor
+ * 
+ * Creates a unique software node with a timestamp and PID to avoid sysfs conflicts
+ * across module load/unload cycles, even when old nodes persist.
+ */
+static struct software_node *chuwi_minibook_x_create_unique_software_node(bool is_lid)
+{
+	struct software_node *node;
+	char *name;
+	ktime_t now = ktime_get();
+	u64 timestamp = ktime_to_ns(now);
+	
+	node = kzalloc(sizeof(*node), GFP_KERNEL);
+	if (!node)
+		return NULL;
+		
+	name = kzalloc(48, GFP_KERNEL);
+	if (!name) {
+		kfree(node);
+		return NULL;
+	}
+	
+	/* Use timestamp and current PID to ensure uniqueness across all module reloads */
+	snprintf(name, 48, "mxc4005-%s-%llu-%d", 
+		 is_lid ? "lid" : "base", 
+		 timestamp & 0xFFFFFFFF,  /* Use lower 32 bits of timestamp */
+		 current->pid);
+	
+	node->name = name;
+	node->properties = is_lid ? lid_sensor_props : base_sensor_props;
+	
+	return node;
+}
+
+/**
+ * chuwi_minibook_x_free_software_node - Free allocated software node
+ */
+static void chuwi_minibook_x_free_software_node(struct software_node *node)
+{
+	if (node) {
+		kfree(node->name);
+		kfree(node);
+	}
+}
+
+/**
  * chuwi_minibook_x_apply_mount_matrix_to_existing - Apply mount matrix to existing device
  */
 static int chuwi_minibook_x_apply_mount_matrix_to_existing(struct i2c_client *client, bool is_lid)
 {
-	const struct software_node *node;
+	struct software_node *unique_node;
 	int ret;
 	
 	if (!client || !enable_mount_matrix) {
 		return 0;
 	}
 	
-	/* Select appropriate software node */
-	node = is_lid ? &lid_sensor_node : &base_sensor_node;
+	/* Create a unique software node to avoid sysfs conflicts across reloads */
+	unique_node = chuwi_minibook_x_create_unique_software_node(is_lid);
+	if (!unique_node) {
+		pr_err(DRV_NAME ": Failed to create unique software node for existing device i2c-%d:0x%02x\n",
+			client->adapter->nr, client->addr);
+		return -ENOMEM;
+	}
 	
-	/* Apply the software node to the existing device */
-	ret = device_add_software_node(&client->dev, node);
+	/* Register the software node first */
+	ret = software_node_register(unique_node);
 	if (ret) {
-		pr_warn(DRV_NAME ": Failed to apply mount matrix to existing device i2c-%d:0x%02x: %d\n",
-			client->adapter->nr, client->addr, ret);
+		pr_err(DRV_NAME ": Failed to register software node %s: %d\n", unique_node->name, ret);
+		chuwi_minibook_x_free_software_node(unique_node);
 		return ret;
 	}
 	
-	/* Track the client for cleanup */
-	if (is_lid) {
-		existing_lid_client = client;
-	} else {
-		existing_base_client = client;
+	/* Apply the registered software node to the existing device */
+	ret = device_add_software_node(&client->dev, unique_node);
+	if (ret) {
+		pr_warn(DRV_NAME ": Failed to apply mount matrix to existing device i2c-%d:0x%02x: %d\n",
+			client->adapter->nr, client->addr, ret);
+		software_node_unregister(unique_node);
+		chuwi_minibook_x_free_software_node(unique_node);
+		return ret;
 	}
 	
-	pr_info(DRV_NAME ": Applied %s sensor mount matrix (%s) to existing device i2c-%d:0x%02x\n",
-		is_lid ? "lid" : "base",
-		is_lid ? "90° CCW" : "90° CW",
-		client->adapter->nr, client->addr);
+	/* Store the node for cleanup and track the client */
+	if (is_lid) {
+		current_lid_node = unique_node;
+		existing_lid_client = client;
+		pr_info(DRV_NAME ": Found lid sensor at i2c-%d:0x%02x\n",
+			client->adapter->nr, client->addr);
+	} else {
+		current_base_node = unique_node;
+		existing_base_client = client;
+		pr_info(DRV_NAME ": Found base sensor at i2c-%d:0x%02x\n",
+			client->adapter->nr, client->addr);
+	}
 	
 	if (g_chip && g_chip->debug_mode) {
 		pr_info(DRV_NAME ": %s mount matrix: [%s,%s,%s; %s,%s,%s; %s,%s,%s]\n",
@@ -583,7 +629,7 @@ static int chuwi_minibook_x_match_mxc4005(struct device *dev, void *data)
 	
 	if (strcmp(client->dev.driver->name, "mxc4005") == 0) {
 		(*count)++;
-		pr_info(DRV_NAME ": Found MXC4005 device on i2c-%d addr 0x%02x\n",
+		pr_debug(DRV_NAME ": Found MXC4005 device on i2c-%d addr 0x%02x\n",
 			client->adapter->nr, client->addr);
 	}
 	
@@ -623,19 +669,19 @@ static int chuwi_minibook_x_discover_acpi_devices(void)
 	acpi_status status;
 	int count = 0;
 	
-	pr_info(DRV_NAME ": Scanning ACPI namespace for MDA6655 devices\n");
+	pr_debug(DRV_NAME ": Scanning ACPI namespace for MDA6655 devices\n");
 	
 	/* Try to find MDA6655 device in ACPI namespace */
 	status = acpi_get_handle(ACPI_ROOT_OBJECT, "\\_SB.PC00.I2C1.MDA6655", &handle);
 	if (ACPI_SUCCESS(status)) {
-		pr_info(DRV_NAME ": Found MDA6655 ACPI device at \\_SB.PC00.I2C1.MDA6655\n");
+		pr_debug(DRV_NAME ": Found MDA6655 ACPI device at \\_SB.PC00.I2C1.MDA6655\n");
 		count++;
 	}
 	
 	/* Try alternative path */
 	status = acpi_get_handle(ACPI_ROOT_OBJECT, "\\_SB.PCI0.I2C1.MDA6655", &handle);
 	if (ACPI_SUCCESS(status)) {
-		pr_info(DRV_NAME ": Found MDA6655 ACPI device at \\_SB.PCI0.I2C1.MDA6655\n");
+		pr_debug(DRV_NAME ": Found MDA6655 ACPI device at \\_SB.PCI0.I2C1.MDA6655\n");
 		count++;
 	}
 	
@@ -647,20 +693,20 @@ static int chuwi_minibook_x_discover_acpi_devices(void)
 			snprintf(path, sizeof(path), "\\_SB.PC00.I2C%d.MDA6655", i);
 			status = acpi_get_handle(ACPI_ROOT_OBJECT, path, &handle);
 			if (ACPI_SUCCESS(status)) {
-				pr_info(DRV_NAME ": Found MDA6655 ACPI device at %s\n", path);
+				pr_debug(DRV_NAME ": Found MDA6655 ACPI device at %s\n", path);
 				count++;
 			}
 			
 			snprintf(path, sizeof(path), "\\_SB.PCI0.I2C%d.MDA6655", i);
 			status = acpi_get_handle(ACPI_ROOT_OBJECT, path, &handle);
 			if (ACPI_SUCCESS(status)) {
-				pr_info(DRV_NAME ": Found MDA6655 ACPI device at %s\n", path);
+				pr_debug(DRV_NAME ": Found MDA6655 ACPI device at %s\n", path);
 				count++;
 			}
 		}
 	}
 	
-	pr_info(DRV_NAME ": Found %d MDA6655 ACPI device(s)\n", count);
+	pr_debug(DRV_NAME ": Found %d MDA6655 ACPI device(s)\n", count);
 	return count;
 }
 
@@ -693,7 +739,7 @@ static bool chuwi_minibook_x_probe_i2c_address(int bus_nr, int addr)
 	i2c_put_adapter(adapter);
 	
 	if (ret == 1) {
-		pr_info(DRV_NAME ": Device detected at i2c-%d:0x%02x\n", bus_nr, addr);
+		pr_debug(DRV_NAME ": Device detected at i2c-%d:0x%02x\n", bus_nr, addr);
 		return true;
 	} else {
 		pr_debug(DRV_NAME ": No device at i2c-%d:0x%02x (ret=%d)\n", bus_nr, addr, ret);
@@ -740,12 +786,12 @@ static struct i2c_client *chuwi_minibook_x_find_device_on_bus(int bus_nr, int ad
 	bus_for_each_dev(&i2c_bus_type, NULL, &ctx, chuwi_minibook_x_device_iterator);
 	
 	if (ctx.found_client) {
-		pr_info(DRV_NAME ": I2C client already bound at i2c-%d:0x%02x - skipping instantiation\n", 
+		pr_debug(DRV_NAME ": I2C client already bound at i2c-%d:0x%02x - skipping instantiation\n", 
 			bus_nr, addr);
 		return ctx.found_client;
 	}
 	
-	pr_info(DRV_NAME ": No I2C client at i2c-%d:0x%02x - available for instantiation\n", 
+	pr_debug(DRV_NAME ": No I2C client at i2c-%d:0x%02x - available for instantiation\n", 
 		bus_nr, addr);
 	return NULL; /* No bound client at this address */
 }
@@ -777,13 +823,13 @@ static int chuwi_minibook_x_scan_for_accelerometers(void)
 	int i2c_devices = 0;
 	int bus_nr;
 	
-	pr_info(DRV_NAME ": Hardware-level accelerometer discovery starting\n");
+	pr_debug(DRV_NAME ": Hardware-level accelerometer discovery starting\n");
 	
 	/* Strategy 1: ACPI device discovery */
 	acpi_devices = chuwi_minibook_x_discover_acpi_devices();
 	
 	/* Strategy 2: I2C bus scanning for accelerometers at address 0x15 */
-	pr_info(DRV_NAME ": Scanning I2C buses for accelerometers at address 0x15\n");
+	pr_debug(DRV_NAME ": Scanning I2C buses for accelerometers at address 0x15\n");
 	
 	/* Reset discovered device list */
 	discovered_device_count = 0;
@@ -803,22 +849,22 @@ static int chuwi_minibook_x_scan_for_accelerometers(void)
 		}
 	}
 	
-	pr_info(DRV_NAME ": Hardware discovery results: %d ACPI device(s), %d I2C device(s) at 0x15\n", 
+	pr_debug(DRV_NAME ": Hardware discovery results: %d ACPI device(s), %d I2C device(s) at 0x15\n", 
 		acpi_devices, i2c_devices);
 	
 	/* If we found ACPI devices, that's the most reliable */
 	if (acpi_devices > 0) {
-		pr_info(DRV_NAME ": Using ACPI-based device count: %d\n", acpi_devices);
+		pr_debug(DRV_NAME ": Using ACPI-based device count: %d\n", acpi_devices);
 		return acpi_devices;
 	}
 	
 	/* Fall back to I2C detection */
 	if (i2c_devices > 0) {
-		pr_info(DRV_NAME ": Using I2C-based device count: %d\n", i2c_devices);
+		pr_debug(DRV_NAME ": Using I2C-based device count: %d\n", i2c_devices);
 		return i2c_devices;
 	}
 	
-	pr_info(DRV_NAME ": No accelerometer hardware detected\n");
+	pr_debug(DRV_NAME ": No accelerometer hardware detected\n");
 	return 0;
 }
 
@@ -841,7 +887,7 @@ static int chuwi_minibook_x_check_mxc4005_device(struct device *dev, void *data)
 		
 		/* Only consider ACPI or designware-originated devices */
 		if (!chuwi_minibook_x_is_acpi_device(client)) {
-			pr_info(DRV_NAME ": Skipping manually created device %s (not ACPI/designware)\n",
+			pr_debug(DRV_NAME ": Skipping manually created device %s (not ACPI/designware)\n",
 				dev_name(dev));
 			return 0;
 		}
@@ -855,7 +901,7 @@ static int chuwi_minibook_x_check_mxc4005_device(struct device *dev, void *data)
 			}
 			ctx->found_count++;
 			
-			pr_info(DRV_NAME ": Found working MXC4005 device: %s on i2c-%d:0x%02x (%s)\n",
+			pr_debug(DRV_NAME ": Found working MXC4005 device: %s on i2c-%d:0x%02x (%s)\n",
 				client->name, client->adapter->nr, client->addr,
 				ctx->found_count == 1 ? "base" : "lid");
 		}
@@ -899,7 +945,7 @@ static int chuwi_minibook_x_discover_accelerometers(void)
 	int working_count, hardware_count;
 	int working_bus = -1, working_addr = -1;
 	
-	pr_info(DRV_NAME ": Discovering accelerometer devices using robust identification\n");
+	pr_debug(DRV_NAME ": Discovering accelerometer devices using robust identification\n");
 	
 	/* Strategy 1: Hardware-level detection (works regardless of driver state) */
 	hardware_count = chuwi_minibook_x_scan_for_accelerometers();
@@ -907,18 +953,18 @@ static int chuwi_minibook_x_discover_accelerometers(void)
 	/* Strategy 2: Driver-level detection (works if driver already loaded) */
 	working_count = chuwi_minibook_x_find_working_mxc4005_devices(&base_dev, &lid_dev);
 	
-	pr_info(DRV_NAME ": Detection summary: %d hardware device(s), %d working device(s)\n", 
+	pr_debug(DRV_NAME ": Detection summary: %d hardware device(s), %d working device(s)\n", 
 		hardware_count, working_count);
 	
 	if (working_count >= 2) {
-		pr_info(DRV_NAME ": Found %d working accelerometer device(s)\n", working_count);
+		pr_debug(DRV_NAME ": Found %d working accelerometer device(s)\n", working_count);
 		
 		base_client = to_i2c_client(base_dev);
 		lid_client = to_i2c_client(lid_dev);
 		
-		pr_info(DRV_NAME ": Base accelerometer: %s on i2c-%d:0x%02x\n", 
+		pr_debug(DRV_NAME ": Base accelerometer: %s on i2c-%d:0x%02x\n", 
 			base_client->name, base_client->adapter->nr, base_client->addr);
-		pr_info(DRV_NAME ": Lid accelerometer: %s on i2c-%d:0x%02x\n", 
+		pr_debug(DRV_NAME ": Lid accelerometer: %s on i2c-%d:0x%02x\n", 
 			lid_client->name, lid_client->adapter->nr, lid_client->addr);
 		
 		return working_count;
@@ -926,17 +972,17 @@ static int chuwi_minibook_x_discover_accelerometers(void)
 		base_client = to_i2c_client(base_dev);
 		chuwi_minibook_x_get_device_bus_info(base_dev, &working_bus, &working_addr);
 		
-		pr_info(DRV_NAME ": Found 1 working accelerometer: %s on i2c-%d:0x%02x\n", 
+		pr_debug(DRV_NAME ": Found 1 working accelerometer: %s on i2c-%d:0x%02x\n", 
 			base_client->name, base_client->adapter->nr, base_client->addr);
-		pr_info(DRV_NAME ": Hardware indicates %d total device(s) available\n", hardware_count);
+		pr_debug(DRV_NAME ": Hardware indicates %d total device(s) available\n", hardware_count);
 		
-		pr_info(DRV_NAME ": Working device detected - may need to instantiate additional device\n");
+		pr_debug(DRV_NAME ": Working device detected - may need to instantiate additional device\n");
 		
 		return working_count;
 	} else {
-		pr_info(DRV_NAME ": No working accelerometer devices found via driver\n");
+		pr_debug(DRV_NAME ": No working accelerometer devices found via driver\n");
 		if (hardware_count > 0) {
-			pr_info(DRV_NAME ": But hardware detection found %d device(s) - driver may not be loaded\n", hardware_count);
+			pr_debug(DRV_NAME ": But hardware detection found %d device(s) - driver may not be loaded\n", hardware_count);
 		}
 		return hardware_count; /* Return hardware count when no driver-level devices found */
 	}
@@ -968,7 +1014,7 @@ static int chuwi_minibook_x_instantiate_mxc4005(int bus_nr, int addr, bool is_se
 	/* Check if there's already an I2C client bound at this address */
 	existing_device = chuwi_minibook_x_find_device_on_bus(bus_nr, addr);
 	if (existing_device) {
-		pr_info(DRV_NAME ": I2C client already bound at i2c-%d:0x%02x - skipping instantiation\n", 
+		pr_debug(DRV_NAME ": I2C client already bound at i2c-%d:0x%02x - skipping instantiation\n", 
 			bus_nr, addr);
 		return 0; /* Device exists, don't try to create another */
 	}
@@ -984,21 +1030,31 @@ static int chuwi_minibook_x_instantiate_mxc4005(int bus_nr, int addr, bool is_se
 	
 	/* Apply mount matrix if enabled */
 	if (enable_mount_matrix) {
+		struct software_node *unique_node = chuwi_minibook_x_create_unique_software_node(is_lid);
+		if (!unique_node) {
+			pr_err(DRV_NAME ": Failed to create unique software node for i2c-%d:0x%02x\n", bus_nr, addr);
+			i2c_put_adapter(adapter);
+			return -ENOMEM;
+		}
+		
+		info.swnode = unique_node;
+		
+		/* Store the node for cleanup */
 		if (is_lid) {
-			info.swnode = &lid_sensor_node;
-			pr_info(DRV_NAME ": Applying lid sensor mount matrix (90° CCW) to i2c-%d:0x%02x\n", bus_nr, addr);
-			if (g_chip && g_chip->debug_mode) {
-				pr_info(DRV_NAME ": Lid mount matrix: [0,1,0; -1,0,0; 0,0,1]\n");
-			}
+			current_lid_node = unique_node;
 		} else {
-			info.swnode = &base_sensor_node;
-			pr_info(DRV_NAME ": Applying base sensor mount matrix (90° CW) to i2c-%d:0x%02x\n", bus_nr, addr);
-			if (g_chip && g_chip->debug_mode) {
-				pr_info(DRV_NAME ": Base mount matrix: [0,-1,0; 1,0,0; 0,0,1]\n");
-			}
+			current_base_node = unique_node;
+		}
+		
+		pr_debug(DRV_NAME ": Applying %s sensor mount matrix to i2c-%d:0x%02x\n", 
+			is_lid ? "lid" : "base", bus_nr, addr);
+		if (g_chip && g_chip->debug_mode) {
+			pr_info(DRV_NAME ": %s mount matrix: %s\n", 
+				is_lid ? "Lid" : "Base",
+				is_lid ? "[0,1,0; -1,0,0; 0,0,1]" : "[0,-1,0; 1,0,0; 0,0,1]");
 		}
 	} else {
-		pr_info(DRV_NAME ": Mount matrix disabled for i2c-%d:0x%02x, using identity transformation\n", bus_nr, addr);
+		pr_debug(DRV_NAME ": Mount matrix disabled for i2c-%d:0x%02x, using identity transformation\n", bus_nr, addr);
 		if (g_chip && g_chip->debug_mode) {
 			pr_info(DRV_NAME ": Identity matrix: [1,0,0; 0,1,0; 0,0,1]\n");
 		}
@@ -1024,9 +1080,8 @@ static int chuwi_minibook_x_instantiate_mxc4005(int bus_nr, int addr, bool is_se
 		instantiated_addr = addr;
 	}
 	
-	pr_info(DRV_NAME ": Instantiated MXC4005 on i2c-%d addr 0x%02x (%s sensor with %s)\n",
-		bus_nr, addr, is_lid ? "lid" : "base",
-		enable_mount_matrix ? (is_lid ? "90° CCW mount matrix" : "90° CW mount matrix") : "identity matrix");
+	pr_info(DRV_NAME ": Found %s sensor at i2c-%d:0x%02x\n",
+		is_lid ? "lid" : "base", bus_nr, addr);
 	
 	if (g_chip && g_chip->debug_mode) {
 		pr_info(DRV_NAME ": Device %s will be available as IIO device after driver binding\n",
@@ -1101,7 +1156,7 @@ static int chuwi_minibook_x_setup_accelerometers(void)
 		lid_device.bus_nr = discovered_devices[discovered_device_count - 1].bus_nr;  /* Higher bus number */
 		lid_device.addr = discovered_devices[discovered_device_count - 1].addr;
 		
-		pr_info(DRV_NAME ": Device assignment: lid=i2c-%d:0x%02x (higher bus), base=i2c-%d:0x%02x (lower bus)\n",
+		pr_debug(DRV_NAME ": Device assignment: lid=i2c-%d:0x%02x (higher bus), base=i2c-%d:0x%02x (lower bus)\n",
 			lid_device.bus_nr, lid_device.addr, base_device.bus_nr, base_device.addr);
 	}
 	
@@ -1109,7 +1164,7 @@ static int chuwi_minibook_x_setup_accelerometers(void)
 	if (lid_device.bus_nr >= 0) {
 		lid_device.existing_client = chuwi_minibook_x_find_device_on_bus(lid_device.bus_nr, lid_device.addr);
 		if (lid_device.existing_client) {
-			pr_info(DRV_NAME ": Found existing MXC4005 device for lid on i2c-%d:0x%02x\n", 
+			pr_debug(DRV_NAME ": Found existing MXC4005 device for lid on i2c-%d:0x%02x\n", 
 				lid_device.bus_nr, lid_device.addr);
 			ret = chuwi_minibook_x_apply_mount_matrix_to_existing(lid_device.existing_client, true);
 			if (ret == 0) {
@@ -1122,7 +1177,7 @@ static int chuwi_minibook_x_setup_accelerometers(void)
 	if (base_device.bus_nr >= 0) {
 		base_device.existing_client = chuwi_minibook_x_find_device_on_bus(base_device.bus_nr, base_device.addr);
 		if (base_device.existing_client) {
-			pr_info(DRV_NAME ": Found existing MXC4005 device for base on i2c-%d:0x%02x\n", 
+			pr_debug(DRV_NAME ": Found existing MXC4005 device for base on i2c-%d:0x%02x\n", 
 				base_device.bus_nr, base_device.addr);
 			ret = chuwi_minibook_x_apply_mount_matrix_to_existing(base_device.existing_client, false);
 			if (ret == 0) {
@@ -1135,49 +1190,49 @@ static int chuwi_minibook_x_setup_accelerometers(void)
 	/* Initial count - may be 0 if devices haven't been bound yet */
 	mxc_count = chuwi_minibook_x_count_mxc4005_devices();
 	
-	pr_info(DRV_NAME ": Found %d existing MXC4005 device(s) with mount matrices applied\n", mxc_count);
+	pr_debug(DRV_NAME ": Found %d existing MXC4005 device(s) with mount matrices applied\n", mxc_count);
 
 	if (mxc_count < 2 || !lid_device.handled || !base_device.handled) {
-		pr_info(DRV_NAME ": Need to instantiate devices (current: %d, lid_handled: %s, base_handled: %s)\n",
+		pr_debug(DRV_NAME ": Need to instantiate devices (current: %d, lid_handled: %s, base_handled: %s)\n",
 			mxc_count, lid_device.handled ? "yes" : "no", base_device.handled ? "yes" : "no");
 		
 		/* Instantiate lid sensor if needed */
 		if (!lid_device.handled && lid_device.bus_nr >= 0) {
-			pr_info(DRV_NAME ": Instantiating lid accelerometer on discovered hardware i2c-%d addr 0x%02x\n", 
+			pr_debug(DRV_NAME ": Instantiating lid accelerometer on discovered hardware i2c-%d addr 0x%02x\n", 
 				lid_device.bus_nr, lid_device.addr);
 			ret = chuwi_minibook_x_instantiate_mxc4005(lid_device.bus_nr, lid_device.addr, false, true);
 			if (ret == 0) {
 				lid_device.handled = true;
-				pr_info(DRV_NAME ": Lid accelerometer instantiated successfully\n");
+				pr_debug(DRV_NAME ": Lid accelerometer instantiated successfully\n");
 			} else {
 				pr_err(DRV_NAME ": Failed to instantiate lid accelerometer: %d\n", ret);
 			}
 		} else if (!lid_device.handled) {
-			pr_warn(DRV_NAME ": No available location found for lid accelerometer\n");
+			pr_warn(DRV_NAME ": Could not find lid sensor\n");
 		}
 		
 		/* Instantiate base sensor if needed */
 		if (!base_device.handled && base_device.bus_nr >= 0) {
-			pr_info(DRV_NAME ": Instantiating base accelerometer on discovered hardware i2c-%d addr 0x%02x\n", 
+			pr_debug(DRV_NAME ": Instantiating base accelerometer on discovered hardware i2c-%d addr 0x%02x\n", 
 				base_device.bus_nr, base_device.addr);
 			ret = chuwi_minibook_x_instantiate_mxc4005(base_device.bus_nr, base_device.addr, true, false);
 			if (ret == 0) {
 				base_device.handled = true;
-				pr_info(DRV_NAME ": Base accelerometer instantiated successfully\n");
+				pr_debug(DRV_NAME ": Base accelerometer instantiated successfully\n");
 			} else {
 				pr_err(DRV_NAME ": Failed to instantiate base accelerometer: %d\n", ret);
 			}
 		} else if (!base_device.handled) {
-			pr_warn(DRV_NAME ": No available location found for base accelerometer\n");
+			pr_warn(DRV_NAME ": Could not find base sensor\n");
 		}
 	} else {
-		pr_info(DRV_NAME ": All accelerometers already configured with mount matrices\n");
+		pr_debug(DRV_NAME ": All accelerometers already configured with mount matrices\n");
 	}
 	
 	/* FIXME: Wait for all devices to complete driver binding */
 	msleep(500);
 	mxc_count = chuwi_minibook_x_count_mxc4005_devices();
-	pr_info(DRV_NAME ": Final accelerometer count: %d\n", mxc_count);
+	pr_debug(DRV_NAME ": Final accelerometer count: %d\n", mxc_count);
 	
 	return 0;
 }
@@ -1189,7 +1244,7 @@ static int chuwi_minibook_x_init_tablet_mode(struct platform_device *pdev)
 {
 	int ret;
 	
-	pr_info(DRV_NAME ": Initializing tablet mode detection\n");
+	pr_debug(DRV_NAME ": Initializing tablet mode detection\n");
 	
 	/* Initialize default values from module parameters */
 	init_module_defaults();
@@ -1218,7 +1273,7 @@ static int chuwi_minibook_x_init_tablet_mode(struct platform_device *pdev)
 	/* Set initial tablet mode state to laptop mode (not in tablet mode) */
 	input_report_switch(tm_input, SW_TABLET_MODE, 0);
 	input_sync(tm_input);
-	pr_info(DRV_NAME ": Initial mode set to laptop (tablet mode disabled)\n");
+	pr_debug(DRV_NAME ": Initial mode set to laptop (tablet mode disabled)\n");
 	
 	/* Create sysfs interface under platform driver */
 	ret = sysfs_create_group(&pdev->dev.kobj, &tablet_mode_attr_group);
@@ -1231,7 +1286,7 @@ static int chuwi_minibook_x_init_tablet_mode(struct platform_device *pdev)
 	/* Initialize delayed work */
 	INIT_DELAYED_WORK(&poll_work, poll_work_fn);
 	
-	pr_info(DRV_NAME ": Tablet mode detection initialized successfully\n");
+	pr_debug(DRV_NAME ": Tablet mode detection initialized successfully\n");
 	
 	return 0;
 }
@@ -1281,7 +1336,7 @@ int chuwi_minibook_x_probe(struct platform_device *pdev)
 	struct chuwi_minibook_x *chip;
 	int ret;
 
-	dev_info(&pdev->dev, "Chuwi Minibook X integrated driver probing\n");
+	dev_dbg(&pdev->dev, "Chuwi Minibook X integrated driver probing\n");
 
 	chip = devm_kzalloc(&pdev->dev, sizeof(*chip), GFP_KERNEL);
 	if (!chip)
@@ -1295,11 +1350,6 @@ int chuwi_minibook_x_probe(struct platform_device *pdev)
 	chip->accel_count = 0;
 	chip->debug_mode = false;  /* Can be enabled via sysfs after module load */
 	mutex_init(&chip->lock);
-
-	/* Check DMI support */
-	if (!chuwi_minibook_x_check_dmi_match()) {
-		dev_warn(&pdev->dev, "Hardware not fully supported, continuing anyway\n");
-	}
 
 	/* Setup accelerometer hardware with mount matrices */
 	ret = chuwi_minibook_x_setup_accelerometers();
@@ -1322,15 +1372,7 @@ int chuwi_minibook_x_probe(struct platform_device *pdev)
 		/* Continue without basic sysfs */
 	}
 
-	/* Initialize debugfs if enabled */
-	ret = chuwi_minibook_x_debugfs_init(chip);
-	if (ret) {
-		dev_warn(&pdev->dev, "Failed to setup debugfs: %d\n", ret);
-		/* Continue without debugfs */
-	}
-
-	dev_info(&pdev->dev, "Chuwi Minibook X integrated driver loaded successfully\n");
-	dev_info(&pdev->dev, "Mount matrix support: %s\n", enable_mount_matrix ? "enabled" : "disabled");
+	dev_dbg(&pdev->dev, "Mount matrix support: %s\n", enable_mount_matrix ? "enabled" : "disabled");
 	dev_info(&pdev->dev, "Tablet mode detection initialized with %ums polling\n", poll_ms);
 
 	return 0;
@@ -1342,45 +1384,6 @@ err_cleanup:
 	return ret;
 }
 
-#ifdef CONFIG_CHUWI_MINIBOOK_X_DEBUGFS
-/**
- * chuwi_minibook_x_debugfs_init - Initialize debugfs interface
- */
-int chuwi_minibook_x_debugfs_init(struct chuwi_minibook_x *chip)
-{
-	char dirname[32];
-	
-	/* Create main debugfs directory */
-	snprintf(dirname, sizeof(dirname), "chuwi-minibook-x");
-	chip->debugfs_dir = debugfs_create_dir(dirname, NULL);
-	if (IS_ERR_OR_NULL(chip->debugfs_dir)) {
-		dev_warn(&chip->pdev->dev, "Failed to create debugfs directory\n");
-		return -ENODEV;
-	}
-	
-	/* Create debugfs entries for raw data and calculations */
-	chip->debugfs_raw_data = debugfs_create_file("raw_data", 0444, chip->debugfs_dir, 
-						     chip, NULL);
-	chip->debugfs_calculations = debugfs_create_file("calculations", 0444, chip->debugfs_dir,
-							  chip, NULL);
-	
-	dev_info(&chip->pdev->dev, "Debugfs interface created\n");
-	return 0;
-}
-
-/**
- * chuwi_minibook_x_debugfs_cleanup - Cleanup debugfs interface
- */
-void chuwi_minibook_x_debugfs_cleanup(struct chuwi_minibook_x *chip)
-{
-	if (chip->debugfs_dir) {
-		debugfs_remove_recursive(chip->debugfs_dir);
-		chip->debugfs_dir = NULL;
-		dev_info(&chip->pdev->dev, "Debugfs interface removed\n");
-	}
-}
-#endif
-
 /**
  * chuwi_minibook_x_remove - Platform device remove function
  */
@@ -1388,13 +1391,10 @@ void chuwi_minibook_x_remove(struct platform_device *pdev)
 {
 	struct chuwi_minibook_x *chip = platform_get_drvdata(pdev);
 
-	dev_info(&pdev->dev, "Chuwi Minibook X integrated driver removing\n");
+	dev_dbg(&pdev->dev, "Chuwi Minibook X integrated driver removing\n");
 
 	/* Cleanup tablet mode detection */
 	chuwi_minibook_x_cleanup_tablet_mode();
-
-	/* Cleanup debugfs */
-	chuwi_minibook_x_debugfs_cleanup(chip);
 
 	/* Remove basic sysfs interface */
 	chuwi_minibook_x_remove_sysfs(chip);
@@ -1402,7 +1402,7 @@ void chuwi_minibook_x_remove(struct platform_device *pdev)
 	/* Clear global reference */
 	g_chip = NULL;
 
-	dev_info(&pdev->dev, "Chuwi Minibook X integrated driver removed\n");
+	dev_dbg(&pdev->dev, "Chuwi Minibook X integrated driver removed\n");
 }
 
 /* Platform driver structure */
@@ -1425,14 +1425,14 @@ static int __init chuwi_minibook_x_init(void)
 	int ret;
 	bool hardware_supported;
 
-	pr_info(DRV_NAME " integrated driver initializing\n");
+	pr_debug(DRV_NAME " integrated driver initializing\n");
 
 	/* Use mutex to prevent race conditions during initialization */
 	mutex_lock(&driver_init_lock);
 
 	/* Check if driver is already registered */
 	if (driver_registered) {
-		pr_info("Driver already registered, skipping duplicate initialization\n");
+		pr_debug("Driver already registered, skipping duplicate initialization\n");
 		mutex_unlock(&driver_init_lock);
 		return 0;
 	}
@@ -1446,7 +1446,7 @@ static int __init chuwi_minibook_x_init(void)
 	/* Register platform driver */
 	ret = platform_driver_register(&chuwi_minibook_x_driver);
 	if (ret == -EBUSY || ret == -EEXIST) {
-		pr_info("Platform driver already registered, initialization successful\n");
+		pr_debug("Platform driver already registered, initialization successful\n");
 		mutex_unlock(&driver_init_lock);
 		return 0;
 	} else if (ret) {
@@ -1458,7 +1458,7 @@ static int __init chuwi_minibook_x_init(void)
 
 	/* Create platform device manually based on DMI detection */
 	if (hardware_supported && !device_created) {
-		pr_info("Creating platform device based on DMI detection\n");
+		pr_debug("Creating platform device based on DMI detection\n");
 		chuwi_minibook_x_device = platform_device_register_simple(
 			CHUWI_MINIBOOK_X_DRIVER_NAME, -1, NULL, 0);
 		if (IS_ERR(chuwi_minibook_x_device)) {
@@ -1470,14 +1470,14 @@ static int __init chuwi_minibook_x_init(void)
 			return ret;
 		}
 		device_created = true;
-		pr_info("Platform device created successfully\n");
+		pr_debug("Platform device created successfully\n");
 	} else if (!hardware_supported) {
-		pr_info("Hardware not supported, platform driver registered but no device created\n");
+		pr_debug("Hardware not supported, platform driver registered but no device created\n");
 		chuwi_minibook_x_device = NULL;
 	}
 
 	mutex_unlock(&driver_init_lock);
-	pr_info(DRV_NAME " integrated driver initialized successfully\n");
+	pr_debug(DRV_NAME " integrated driver initialized successfully\n");
 	return 0;
 }
 
@@ -1486,38 +1486,53 @@ static int __init chuwi_minibook_x_init(void)
  */
 static void __exit chuwi_minibook_x_exit(void)
 {
-	pr_info(DRV_NAME " integrated driver exiting\n");
+	pr_debug(DRV_NAME " integrated driver exiting\n");
 
 	mutex_lock(&driver_init_lock);
 
 	/* Clean up software nodes applied to existing devices (protected by driver_init_lock) */
 	if (existing_lid_client) {
 		device_remove_software_node(&existing_lid_client->dev);
-		pr_info(DRV_NAME ": Removed mount matrix from existing lid device i2c-%d:0x%02x\n",
+		pr_debug(DRV_NAME ": Removed mount matrix from existing lid device i2c-%d:0x%02x\n",
 			existing_lid_client->adapter->nr, existing_lid_client->addr);
 		existing_lid_client = NULL;
 	}
 	
 	if (existing_base_client) {
 		device_remove_software_node(&existing_base_client->dev);
-		pr_info(DRV_NAME ": Removed mount matrix from existing base device i2c-%d:0x%02x\n",
+		pr_debug(DRV_NAME ": Removed mount matrix from existing base device i2c-%d:0x%02x\n",
 			existing_base_client->adapter->nr, existing_base_client->addr);
 		existing_base_client = NULL;
 	}
 
 	/* Clean up any manually instantiated I2C devices */
 	if (instantiated_client) {
-		pr_info(DRV_NAME ": Removing manually instantiated MXC4005 on i2c-%d addr 0x%02x\n",
+		pr_debug(DRV_NAME ": Removing manually instantiated MXC4005 on i2c-%d addr 0x%02x\n",
 			instantiated_bus, instantiated_addr);
 		i2c_unregister_device(instantiated_client);
 		instantiated_client = NULL;
 	}
 
 	if (instantiated_client2) {
-		pr_info(DRV_NAME ": Removing second manually instantiated MXC4005 on i2c-%d addr 0x%02x\n",
+		pr_debug(DRV_NAME ": Removing second manually instantiated MXC4005 on i2c-%d addr 0x%02x\n",
 			instantiated_bus2, instantiated_addr2);
 		i2c_unregister_device(instantiated_client2);
 		instantiated_client2 = NULL;
+	}
+
+	/* Clean up allocated software nodes - must unregister before freeing */
+	if (current_lid_node) {
+		software_node_unregister(current_lid_node);
+		pr_debug(DRV_NAME ": Unregistered lid software node %s\n", current_lid_node->name);
+		chuwi_minibook_x_free_software_node(current_lid_node);
+		current_lid_node = NULL;
+	}
+	
+	if (current_base_node) {
+		software_node_unregister(current_base_node);
+		pr_debug(DRV_NAME ": Unregistered base software node %s\n", current_base_node->name);
+		chuwi_minibook_x_free_software_node(current_base_node);
+		current_base_node = NULL;
 	}
 
 	/* Remove manual platform device if we created one */
@@ -1534,7 +1549,7 @@ static void __exit chuwi_minibook_x_exit(void)
 	}
 
 	mutex_unlock(&driver_init_lock);
-	pr_info(DRV_NAME " integrated driver exited\n");
+	pr_debug(DRV_NAME " integrated driver exited\n");
 }
 
 module_init(chuwi_minibook_x_init);
