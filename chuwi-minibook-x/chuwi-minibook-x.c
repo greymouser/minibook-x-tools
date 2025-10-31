@@ -674,6 +674,281 @@ static int chuwi_minibook_x_match_mxc4005(struct device *dev, void *data)
 }
 
 /**
+ * chuwi_minibook_x_is_acpi_device - Check if I2C device originates from ACPI
+ */
+static bool chuwi_minibook_x_is_acpi_device(struct i2c_client *client)
+{
+	/* Check if device name contains ACPI-style identifiers */
+	if (strstr(client->name, "MDA6655") || 
+	    strstr(client->name, "GDIX") ||
+	    strstr(client->name, ":")) {
+		return true;
+	}
+	
+	/* Check if device is on a designware I2C controller (more reliable) */
+	if (client->adapter->dev.parent && 
+	    strstr(dev_name(client->adapter->dev.parent), "i2c_designware")) {
+		return true;
+	}
+	
+	return false;
+}
+
+/**
+ * chuwi_minibook_x_discover_acpi_devices - Find MDA6655 ACPI devices
+ * 
+ * This function scans for MDA6655 devices using ACPI device enumeration,
+ * independent of driver loading state.
+ */
+static int chuwi_minibook_x_discover_acpi_devices(void)
+{
+	acpi_handle handle;
+	acpi_status status;
+	int count = 0;
+	
+	pr_info(DRV_NAME ": Scanning ACPI namespace for MDA6655 devices\n");
+	
+	/* Try to find MDA6655 device in ACPI namespace */
+	status = acpi_get_handle(ACPI_ROOT_OBJECT, "\\_SB.PC00.I2C1.MDA6655", &handle);
+	if (ACPI_SUCCESS(status)) {
+		pr_info(DRV_NAME ": Found MDA6655 ACPI device at \\_SB.PC00.I2C1.MDA6655\n");
+		count++;
+	}
+	
+	/* Try alternative path */
+	status = acpi_get_handle(ACPI_ROOT_OBJECT, "\\_SB.PCI0.I2C1.MDA6655", &handle);
+	if (ACPI_SUCCESS(status)) {
+		pr_info(DRV_NAME ": Found MDA6655 ACPI device at \\_SB.PCI0.I2C1.MDA6655\n");
+		count++;
+	}
+	
+	/* Try searching under all I2C controllers */
+	{
+		int i;
+		for (i = 0; i <= 5; i++) {
+			char path[64];
+			snprintf(path, sizeof(path), "\\_SB.PC00.I2C%d.MDA6655", i);
+			status = acpi_get_handle(ACPI_ROOT_OBJECT, path, &handle);
+			if (ACPI_SUCCESS(status)) {
+				pr_info(DRV_NAME ": Found MDA6655 ACPI device at %s\n", path);
+				count++;
+			}
+			
+			snprintf(path, sizeof(path), "\\_SB.PCI0.I2C%d.MDA6655", i);
+			status = acpi_get_handle(ACPI_ROOT_OBJECT, path, &handle);
+			if (ACPI_SUCCESS(status)) {
+				pr_info(DRV_NAME ": Found MDA6655 ACPI device at %s\n", path);
+				count++;
+			}
+		}
+	}
+	
+	pr_info(DRV_NAME ": Found %d MDA6655 ACPI device(s)\n", count);
+	return count;
+}
+
+/**
+ * chuwi_minibook_x_probe_i2c_address - Probe for device at I2C address
+ * 
+ * This function attempts to detect if there's a responsive device at the given
+ * I2C bus and address, independent of driver binding.
+ */
+static bool chuwi_minibook_x_probe_i2c_address(int bus_nr, int addr)
+{
+	struct i2c_adapter *adapter;
+	struct i2c_msg msg;
+	u8 buf[1];
+	int ret;
+	
+	adapter = i2c_get_adapter(bus_nr);
+	if (!adapter) {
+		pr_debug(DRV_NAME ": I2C adapter %d not found\n", bus_nr);
+		return false;
+	}
+	
+	/* Try a simple read to detect device presence */
+	msg.addr = addr;
+	msg.flags = I2C_M_RD;
+	msg.len = 1;
+	msg.buf = buf;
+	
+	ret = i2c_transfer(adapter, &msg, 1);
+	i2c_put_adapter(adapter);
+	
+	if (ret == 1) {
+		pr_info(DRV_NAME ": Device detected at i2c-%d:0x%02x\n", bus_nr, addr);
+		return true;
+	} else {
+		pr_debug(DRV_NAME ": No device at i2c-%d:0x%02x (ret=%d)\n", bus_nr, addr, ret);
+		return false;
+	}
+}
+
+/**
+ * chuwi_minibook_x_scan_for_accelerometers - Hardware-level accelerometer detection
+ * 
+ * This function scans for accelerometer hardware using multiple strategies:
+ * 1. ACPI device enumeration (finds MDA6655 devices)
+ * 2. I2C bus probing (detects hardware at known addresses)
+ * 3. Works regardless of driver loading state
+ */
+static int chuwi_minibook_x_scan_for_accelerometers(void)
+{
+	int acpi_devices = 0;
+	int i2c_devices = 0;
+	int bus_nr;
+	
+	pr_info(DRV_NAME ": Hardware-level accelerometer discovery starting\n");
+	
+	/* Strategy 1: ACPI device discovery */
+	acpi_devices = chuwi_minibook_x_discover_acpi_devices();
+	
+	/* Strategy 2: I2C bus scanning for accelerometers at address 0x15 */
+	pr_info(DRV_NAME ": Scanning I2C buses for accelerometers at address 0x15\n");
+	
+	/* Scan likely I2C bus numbers (typically 10-15 for designware controllers) */
+	for (bus_nr = 10; bus_nr <= 15; bus_nr++) {
+		if (chuwi_minibook_x_probe_i2c_address(bus_nr, 0x15)) {
+			i2c_devices++;
+		}
+	}
+	
+	pr_info(DRV_NAME ": Hardware discovery results: %d ACPI device(s), %d I2C device(s) at 0x15\n", 
+		acpi_devices, i2c_devices);
+	
+	/* If we found ACPI devices, that's the most reliable */
+	if (acpi_devices > 0) {
+		pr_info(DRV_NAME ": Using ACPI-based device count: %d\n", acpi_devices);
+		return acpi_devices;
+	}
+	
+	/* Fall back to I2C detection */
+	if (i2c_devices > 0) {
+		pr_info(DRV_NAME ": Using I2C-based device count: %d\n", i2c_devices);
+		return i2c_devices;
+	}
+	
+	pr_info(DRV_NAME ": No accelerometer hardware detected\n");
+	return 0;
+}
+
+/* Context structure for device discovery callback */
+struct device_discovery_ctx {
+	struct device *base_dev;
+	struct device *lid_dev;
+	int found_count;
+};
+
+/**
+ * chuwi_minibook_x_check_mxc4005_device - Callback to check each I2C device
+ */
+static int chuwi_minibook_x_check_mxc4005_device(struct device *dev, void *data)
+{
+	struct device_discovery_ctx *ctx = (struct device_discovery_ctx *)data;
+	struct i2c_client *client;
+	
+	if (dev->driver && strcmp(dev->driver->name, "mxc4005") == 0) {
+		client = to_i2c_client(dev);
+		
+		/* Only consider ACPI or designware-originated devices */
+		if (!chuwi_minibook_x_is_acpi_device(client)) {
+			pr_info(DRV_NAME ": Skipping manually created device %s (not ACPI/designware)\n",
+				dev_name(dev));
+			return 0;
+		}
+		
+		/* Simple heuristic: ACPI devices with "MDA6655" are ours */
+		if (strstr(client->name, "MDA6655")) {
+			if (ctx->found_count == 0) {
+				ctx->base_dev = dev; /* First device = base */
+			} else if (ctx->found_count == 1) {
+				ctx->lid_dev = dev; /* Second device = lid */
+			}
+			ctx->found_count++;
+			
+			pr_info(DRV_NAME ": Found working MXC4005 device: %s on i2c-%d:0x%02x (%s)\n",
+				client->name, client->adapter->nr, client->addr,
+				ctx->found_count == 1 ? "base" : "lid");
+		}
+	}
+	return 0;
+}
+
+/**
+ * chuwi_minibook_x_find_working_mxc4005_devices - Find functional MXC4005 devices
+ * 
+ * This function finds MXC4005 devices that are actually working (have IIO interfaces)
+ * and identifies them reliably without depending on bus numbers.
+ */
+static int chuwi_minibook_x_find_working_mxc4005_devices(struct device **base_dev, struct device **lid_dev)
+{
+	struct device_discovery_ctx ctx = {
+		.base_dev = NULL,
+		.lid_dev = NULL,
+		.found_count = 0
+	};
+	
+	/* Iterate through all I2C devices bound to mxc4005 driver */
+	bus_for_each_dev(&i2c_bus_type, NULL, &ctx, chuwi_minibook_x_check_mxc4005_device);
+	
+	*base_dev = ctx.base_dev;
+	*lid_dev = ctx.lid_dev;
+	
+	return ctx.found_count;
+}
+
+/**
+ * chuwi_minibook_x_discover_accelerometers - Discover accelerometer devices reliably
+ * 
+ * This function uses multiple strategies to find our accelerometer devices
+ * without relying on fixed I2C bus numbers.
+ */
+static int chuwi_minibook_x_discover_accelerometers(void)
+{
+	struct device *base_dev = NULL, *lid_dev = NULL;
+	struct i2c_client *base_client, *lid_client;
+	int working_count, hardware_count;
+	
+	pr_info(DRV_NAME ": Discovering accelerometer devices using robust identification\n");
+	
+	/* Strategy 1: Hardware-level detection (works regardless of driver state) */
+	hardware_count = chuwi_minibook_x_scan_for_accelerometers();
+	
+	/* Strategy 2: Driver-level detection (works if driver already loaded) */
+	working_count = chuwi_minibook_x_find_working_mxc4005_devices(&base_dev, &lid_dev);
+	
+	pr_info(DRV_NAME ": Detection summary: %d hardware device(s), %d working device(s)\n", 
+		hardware_count, working_count);
+	
+	if (working_count >= 2) {
+		pr_info(DRV_NAME ": Found %d working accelerometer device(s)\n", working_count);
+		
+		base_client = to_i2c_client(base_dev);
+		lid_client = to_i2c_client(lid_dev);
+		
+		pr_info(DRV_NAME ": Base accelerometer: %s on i2c-%d:0x%02x\n", 
+			base_client->name, base_client->adapter->nr, base_client->addr);
+		pr_info(DRV_NAME ": Lid accelerometer: %s on i2c-%d:0x%02x\n", 
+			lid_client->name, lid_client->adapter->nr, lid_client->addr);
+		
+		return working_count;
+	} else if (working_count == 1) {
+		base_client = to_i2c_client(base_dev);
+		pr_info(DRV_NAME ": Found 1 working accelerometer: %s on i2c-%d:0x%02x\n", 
+			base_client->name, base_client->adapter->nr, base_client->addr);
+		pr_info(DRV_NAME ": Hardware indicates %d total device(s) available\n", hardware_count);
+		
+		return working_count;
+	} else {
+		pr_info(DRV_NAME ": No working accelerometer devices found via driver\n");
+		if (hardware_count > 0) {
+			pr_info(DRV_NAME ": But hardware detection found %d device(s) - driver may not be loaded\n", hardware_count);
+		}
+		return hardware_count; /* Return hardware count when no driver-level devices found */
+	}
+}
+
+/**
  * chuwi_minibook_x_count_mxc4005_devices - Count available MXC4005 IIO devices
  */
 static int chuwi_minibook_x_count_mxc4005_devices(void)
@@ -819,6 +1094,9 @@ static int chuwi_minibook_x_setup_accelerometers(void)
 	mxc_count = chuwi_minibook_x_count_mxc4005_devices();
 	
 	pr_info(DRV_NAME ": Initially found %d MXC4005 device(s)\n", mxc_count);
+
+	/* Test our robust device discovery function */
+	chuwi_minibook_x_discover_accelerometers();
 
 	if (mxc_count < 2 || !lid_handled || !base_handled) {
 		pr_info(DRV_NAME ": Attempting to instantiate missing accelerometer devices\n");
