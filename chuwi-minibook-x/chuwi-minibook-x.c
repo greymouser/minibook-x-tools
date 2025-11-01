@@ -25,7 +25,6 @@
 #include <linux/dmi.h>
 #include <linux/property.h>
 #include <linux/input.h>
-#include <linux/workqueue.h>
 #include <linux/jiffies.h>
 #include <linux/math64.h>
 #include <linux/minmax.h>
@@ -56,27 +55,6 @@ MODULE_SOFTDEP("pre: serial_multi_instantiate");
 bool enable_mount_matrix = true;
 module_param(enable_mount_matrix, bool, 0644);
 MODULE_PARM_DESC(enable_mount_matrix, "Enable automatic mount matrix transformation (default: true)");
-
-/* Module parameters for tablet mode detection */
-static unsigned int default_poll_ms = 200;
-module_param_named(poll_ms, default_poll_ms, uint, 0644);
-MODULE_PARM_DESC(poll_ms, "Default polling interval in milliseconds (20-5000, default: 200)");
-
-static unsigned int default_enter_deg = 200;
-module_param_named(enter_deg, default_enter_deg, uint, 0644);
-MODULE_PARM_DESC(enter_deg, "Default enter tablet mode threshold in degrees (0-360, default: 200)");
-
-static unsigned int default_exit_deg = 170;
-module_param_named(exit_deg, default_exit_deg, uint, 0644);
-MODULE_PARM_DESC(exit_deg, "Default exit tablet mode threshold in degrees (0-360, default: 170)");
-
-static unsigned int default_hysteresis_deg = 10;
-module_param_named(hysteresis_deg, default_hysteresis_deg, uint, 0644);
-MODULE_PARM_DESC(hysteresis_deg, "Default hysteresis in degrees (0-90, default: 10)");
-
-static bool default_enabled = true;
-module_param_named(enabled, default_enabled, bool, 0644);
-MODULE_PARM_DESC(enabled, "Default polling enabled state (default: 1)");
 
 /**
  * Mount Matrix Definitions
@@ -142,33 +120,11 @@ static struct vec3 g_lid = { 0, 0, -1000000 };
  * Tablet mode configuration and state
  */
 
-/** @enabled: Whether polling is currently enabled */
-static int enabled = 1;
-
-/** @poll_ms: Polling interval in milliseconds */
-static unsigned int poll_ms = 200;
-
-/** @enter_deg: Hinge angle threshold to enter tablet mode */
-static unsigned int enter_deg = 300;
-
-/** @exit_deg: Hinge angle threshold to exit tablet mode */
-static unsigned int exit_deg = 60;
-
-/** @hysteresis_deg: Hysteresis guard angle in degrees */
-static unsigned int hysteresis_deg = 10;
-
 /** @current_mode: Current device mode string */
 static char current_mode[16] = "laptop";
 
 /** @current_orientation: Current device orientation string */
 static char current_orientation[32] = "portrait";
-
-/**
- * Hinge angle calculation parameters
- */
-
-/** @poll_work: Delayed work queue for periodic polling */
-static struct delayed_work poll_work;
 
 /* Global driver context and device tracking */
 static struct chuwi_minibook_x *g_chip;
@@ -232,59 +188,6 @@ MODULE_DEVICE_TABLE(dmi, chuwi_minibook_x_dmi_table);
 /**
  * Forward declarations
  */
-static void poll_work_fn(struct work_struct *w);
-
-/* Initialize default values from module parameters */
-static void init_module_defaults(void)
-{
-	/* Validate and set module parameter defaults */
-	if (default_poll_ms < 20 || default_poll_ms > 5000) {
-		pr_warn(DRV_NAME ": invalid poll_ms parameter %u, using 200\n", default_poll_ms);
-		default_poll_ms = 200;
-	}
-	poll_ms = default_poll_ms;
-
-	if (default_enter_deg > 360) {
-		pr_warn(DRV_NAME ": invalid enter_deg parameter %u, using 200\n", default_enter_deg);
-		default_enter_deg = 200;
-	}
-	enter_deg = default_enter_deg;
-
-	if (default_exit_deg > 360) {
-		pr_warn(DRV_NAME ": invalid exit_deg parameter %u, using 170\n", default_exit_deg);
-		default_exit_deg = 170;
-	}
-	exit_deg = default_exit_deg;
-
-	if (default_hysteresis_deg > 90) {
-		pr_warn(DRV_NAME ": invalid hysteresis_deg parameter %u, using 10\n", default_hysteresis_deg);
-		default_hysteresis_deg = 10;
-	}
-	hysteresis_deg = default_hysteresis_deg;
-
-	enabled = default_enabled ? 1 : 0;
-}
-
-/**
- * poll_work_fn - Work function for tablet mode detection
- * @w: Work structure
- *
- * This is currently a stub that provides infrastructure for future
- * in-kernel tablet mode detection. Currently, the chuwi-minibook-x-daemon
- * userspace program handles calculations and writes to sysfs.
- */
-static void poll_work_fn(struct work_struct *w)
-{
-	mutex_lock(&tm_lock);
-	
-	/* Stub: Full tablet mode detection logic can be added here in the future */
-	pr_debug(DRV_NAME ": Poll work triggered\n");
-	
-	mutex_unlock(&tm_lock);
-
-	if (enabled)
-		schedule_delayed_work(&poll_work, msecs_to_jiffies(poll_ms));
-}
 
 /**
  * Sysfs interface functions
@@ -339,8 +242,6 @@ static ssize_t store_base_vec(struct kobject *k, struct kobj_attribute *a,
 	g_base = v;
 	mutex_unlock(&tm_lock);
 	
-	/* Trigger immediate evaluation using event-driven approach */
-	schedule_delayed_work(&poll_work, 0);
 	return l;
 }
 
@@ -363,8 +264,6 @@ static ssize_t store_lid_vec(struct kobject *k, struct kobj_attribute *a,
 	g_lid = v;
 	mutex_unlock(&tm_lock);
 	
-	/* Trigger immediate evaluation using event-driven approach */
-	schedule_delayed_work(&poll_work, 0);
 	return l;
 }
 
@@ -1238,9 +1137,6 @@ static int chuwi_minibook_x_init_tablet_mode(struct platform_device *pdev)
 	
 	pr_debug(DRV_NAME ": Initializing tablet mode detection\n");
 	
-	/* Initialize default values from module parameters */
-	init_module_defaults();
-	
 	/* Create input device for tablet mode events */
 	tm_input = devm_input_allocate_device(&pdev->dev);
 	if (!tm_input) {
@@ -1275,9 +1171,6 @@ static int chuwi_minibook_x_init_tablet_mode(struct platform_device *pdev)
 		return ret;
 	}
 	
-	/* Initialize delayed work */
-	INIT_DELAYED_WORK(&poll_work, poll_work_fn);
-	
 	pr_debug(DRV_NAME ": Tablet mode detection initialized successfully\n");
 	
 	return 0;
@@ -1288,9 +1181,6 @@ static int chuwi_minibook_x_init_tablet_mode(struct platform_device *pdev)
  */
 static void chuwi_minibook_x_cleanup_tablet_mode(void)
 {
-	/* Cancel any pending work */
-	cancel_delayed_work_sync(&poll_work);
-	
 	/* Remove sysfs interface */
 	if (g_chip && g_chip->pdev) {
 		sysfs_remove_group(&g_chip->pdev->dev.kobj, &tablet_mode_attr_group);
@@ -1365,7 +1255,7 @@ int chuwi_minibook_x_probe(struct platform_device *pdev)
 	}
 
 	dev_dbg(&pdev->dev, "Mount matrix support: %s\n", enable_mount_matrix ? "enabled" : "disabled");
-	dev_info(&pdev->dev, "Tablet mode detection initialized with %ums polling\n", poll_ms);
+	dev_info(&pdev->dev, "Tablet mode detection initialized\n");
 
 	return 0;
 
