@@ -39,6 +39,10 @@ struct chuwi_minibook_x {
 	struct accel_i2c_info accel_i2c_info[2];  /* Maximum 2 accelerometers */
 	int accel_count;      /* Number of accelerometers found via ACPI */
 	
+	/* Detected IIO device assignments for userspace daemon */
+	char base_iio_device[32];   /* Base IIO device name (e.g., "iio:device0") */
+	char lid_iio_device[32];    /* Lid IIO device name (e.g., "iio:device1") */
+	
 	/* Synchronization */
 	struct mutex lock;
 	

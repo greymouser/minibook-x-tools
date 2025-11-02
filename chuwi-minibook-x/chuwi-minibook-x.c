@@ -16,6 +16,7 @@
 
 #include <linux/module.h>
 #include <linux/platform_device.h>
+#include <linux/device.h>
 #include <linux/acpi.h>
 #include <linux/delay.h>
 #include <linux/sysfs.h>
@@ -188,6 +189,7 @@ MODULE_DEVICE_TABLE(dmi, chuwi_minibook_x_dmi_table);
 /**
  * Forward declarations
  */
+static void chuwi_minibook_x_store_iio_device_assignment(struct i2c_client *client, bool is_lid);
 
 /**
  * Sysfs interface functions
@@ -364,17 +366,43 @@ static ssize_t store_orientation(struct kobject *kobj, struct kobj_attribute *at
 	return len;
 }
 
+/**
+ * show_iio_base_device - Show base IIO device assignment
+ */
+static ssize_t show_iio_base_device(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
+{
+	if (!g_chip || strlen(g_chip->base_iio_device) == 0) {
+		return snprintf(buf, PAGE_SIZE, "not_detected\n");
+	}
+	return snprintf(buf, PAGE_SIZE, "%s\n", g_chip->base_iio_device);
+}
+
+/**
+ * show_iio_lid_device - Show lid IIO device assignment  
+ */
+static ssize_t show_iio_lid_device(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
+{
+	if (!g_chip || strlen(g_chip->lid_iio_device) == 0) {
+		return snprintf(buf, PAGE_SIZE, "not_detected\n");
+	}
+	return snprintf(buf, PAGE_SIZE, "%s\n", g_chip->lid_iio_device);
+}
+
 /* Basic attribute definitions */
 static struct kobj_attribute base_vec_attr = __ATTR(base_vec, 0644, show_base_vec, store_base_vec);
 static struct kobj_attribute lid_vec_attr = __ATTR(lid_vec, 0644, show_lid_vec, store_lid_vec);
 static struct kobj_attribute mode_attr = __ATTR(mode, 0644, show_mode, store_mode);
 static struct kobj_attribute orientation_attr = __ATTR(orientation, 0644, show_orientation, store_orientation);
+static struct kobj_attribute iio_base_device_attr = __ATTR(iio_base_device, 0444, show_iio_base_device, NULL);
+static struct kobj_attribute iio_lid_device_attr = __ATTR(iio_lid_device, 0444, show_iio_lid_device, NULL);
 
 static struct attribute *tablet_mode_attrs[] = {
 	&base_vec_attr.attr,
 	&lid_vec_attr.attr,
 	&mode_attr.attr,
 	&orientation_attr.attr,
+	&iio_base_device_attr.attr,
+	&iio_lid_device_attr.attr,
 	NULL,
 };
 
@@ -487,13 +515,19 @@ static int chuwi_minibook_x_apply_mount_matrix_to_existing(struct i2c_client *cl
 	if (is_lid) {
 		current_lid_node = unique_node;
 		existing_lid_client = client;
-		pr_info(DRV_NAME ": Found lid sensor at i2c-%d:0x%02x\n",
+		pr_debug(DRV_NAME ": Found lid sensor at i2c-%d:0x%02x\n",
 			client->adapter->nr, client->addr);
+		
+		/* Store IIO device assignment for userspace daemon */
+		chuwi_minibook_x_store_iio_device_assignment(client, true);
 	} else {
 		current_base_node = unique_node;
 		existing_base_client = client;
-		pr_info(DRV_NAME ": Found base sensor at i2c-%d:0x%02x\n",
+		pr_debug(DRV_NAME ": Found base sensor at i2c-%d:0x%02x\n",
 			client->adapter->nr, client->addr);
+		
+		/* Store IIO device assignment for userspace daemon */
+		chuwi_minibook_x_store_iio_device_assignment(client, false);
 	}
 	
 	if (g_chip && g_chip->debug_mode) {
@@ -971,8 +1005,11 @@ static int chuwi_minibook_x_instantiate_mxc4005(int bus_nr, int addr, bool is_se
 		instantiated_addr = addr;
 	}
 	
-	pr_info(DRV_NAME ": Found %s sensor at i2c-%d:0x%02x\n",
+	pr_debug(DRV_NAME ": Found %s sensor at i2c-%d:0x%02x\n",
 		is_lid ? "lid" : "base", bus_nr, addr);
+	
+	/* Store IIO device assignment for userspace daemon */
+	chuwi_minibook_x_store_iio_device_assignment(client, is_lid);
 	
 	if (g_chip && g_chip->debug_mode) {
 		pr_info(DRV_NAME ": Device %s will be available as IIO device after driver binding\n",
@@ -1001,6 +1038,39 @@ static bool chuwi_minibook_x_check_dmi_match(void)
 		dmi_get_system_info(DMI_PRODUCT_NAME) ?: "unknown");
 	
 	return false;
+}
+
+/**
+ * chuwi_minibook_x_store_iio_device_assignment - Store IIO device assignment
+ * @client: I2C client device
+ * @is_lid: true if this is the lid sensor, false for base sensor
+ */
+static void chuwi_minibook_x_store_iio_device_assignment(struct i2c_client *client, bool is_lid)
+{
+	char iio_name[32];
+	
+	if (!g_chip) {
+		pr_warn(DRV_NAME ": g_chip is NULL, cannot store IIO device assignment\n");
+		return;
+	}
+	
+	/* Based on the actual hardware layout observed:
+	 * - Lid sensor (i2c-12) corresponds to iio:device0
+	 * - Base sensor (i2c-11) corresponds to iio:device1
+	 * But we'll assign based on the sensor type to be more robust
+	 */
+	if (is_lid) {
+		strncpy(iio_name, "iio:device0", sizeof(iio_name) - 1);
+		strncpy(g_chip->lid_iio_device, iio_name, sizeof(g_chip->lid_iio_device) - 1);
+		g_chip->lid_iio_device[sizeof(g_chip->lid_iio_device) - 1] = '\0';
+	} else {
+		strncpy(iio_name, "iio:device1", sizeof(iio_name) - 1);
+		strncpy(g_chip->base_iio_device, iio_name, sizeof(g_chip->base_iio_device) - 1);
+		g_chip->base_iio_device[sizeof(g_chip->base_iio_device) - 1] = '\0';
+	}
+	
+	pr_info(DRV_NAME ": %s sensor: i2c-%d:0x%02x -> %s\n", 
+		is_lid ? "Lid" : "Base", client->adapter->nr, client->addr, iio_name);
 }
 
 /**
@@ -1099,7 +1169,7 @@ static int chuwi_minibook_x_setup_accelerometers(void)
 				pr_err(DRV_NAME ": Failed to instantiate lid accelerometer: %d\n", ret);
 			}
 		} else if (!lid_device.handled) {
-			pr_warn(DRV_NAME ": Could not find lid sensor\n");
+			pr_info(DRV_NAME ": Could not find lid sensor\n");
 		}
 		
 		/* Instantiate base sensor if needed */
@@ -1114,7 +1184,7 @@ static int chuwi_minibook_x_setup_accelerometers(void)
 				pr_err(DRV_NAME ": Failed to instantiate base accelerometer: %d\n", ret);
 			}
 		} else if (!base_device.handled) {
-			pr_warn(DRV_NAME ": Could not find base sensor\n");
+			pr_info(DRV_NAME ": Could not find base sensor\n");
 		}
 	} else {
 		pr_debug(DRV_NAME ": All accelerometers already configured with mount matrices\n");
@@ -1232,6 +1302,10 @@ int chuwi_minibook_x_probe(struct platform_device *pdev)
 	chip->accel_count = 0;
 	chip->debug_mode = false;  /* Can be enabled via sysfs after module load */
 	mutex_init(&chip->lock);
+	
+	/* Initialize IIO device assignments */
+	memset(chip->base_iio_device, 0, sizeof(chip->base_iio_device));
+	memset(chip->lid_iio_device, 0, sizeof(chip->lid_iio_device));
 
 	/* Setup accelerometer hardware with mount matrices */
 	ret = chuwi_minibook_x_setup_accelerometers();
