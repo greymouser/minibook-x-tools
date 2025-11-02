@@ -889,53 +889,14 @@ static int run_feeder(void)
     return 0;
 }
 
-/* Auto-detect MXC4005 devices */
-static int auto_detect_devices(void)
-{
-    char path[PATH_MAX];
-    char name[64];
-    FILE *fp;
-    int device_count = 0;
-    char devices[2][DEVICE_NAME_MAX];
-    
-    log_info("Auto-detecting MXC4005 devices...");
-    
-    for (int i = 0; i < 10; i++) {
-        snprintf(path, sizeof(path), "/sys/bus/iio/devices/iio:device%d/name", i);
-        
-        fp = safe_fopen(path, "r");
-        if (!fp) continue;
-        
-        if (fgets(name, sizeof(name), fp) && strstr(name, "mxc4005")) {
-            snprintf(devices[device_count], sizeof(devices[device_count]), "iio:device%d", i);
-            log_info("Found MXC4005 device: %s", devices[device_count]);
-            device_count++;
-            if (device_count >= 2) {
-                fclose(fp);
-                break;
-            }
-        }
-        fclose(fp);
-    }
-    
-    if (device_count >= 2) {
-        strcpy(cfg.base_dev, devices[0]);
-        strcpy(cfg.lid_dev, devices[1]);
-        log_info("Auto-configured: base=%s, lid=%s", cfg.base_dev, cfg.lid_dev);
-        return 0;
-    }
-    
-    log_warn("Could not auto-detect enough MXC4005 devices (found %d, need 2)", device_count);
-    return -1;
-}
-
 /* Read device assignments from kernel module sysfs */
 static int read_kernel_device_assignments(void)
 {
     char path[PATH_MAX];
     FILE *fp;
     char device_info[64];
-    int bus, addr;
+    int bus;
+    unsigned int addr;
     
     log_info("Reading device assignments from kernel module...");
     
