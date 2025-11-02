@@ -46,12 +46,12 @@ static int find_iio_device_for_i2c(int bus, int addr, char *device_name, size_t 
 
 /* Configuration */
 struct config {
-    char base_dev[DEVICE_NAME_MAX];
-    char lid_dev[DEVICE_NAME_MAX];
-    unsigned int poll_ms;
-    int daemon_mode;
+    char base_dev[64];
+    char lid_dev[64];
+    char sysfs_path[PATH_MAX];
+    unsigned int buffer_timeout_ms;
     int verbose;
-    char sysfs_base[PATH_MAX];
+    int daemon_mode;
 };
 
 /* IIO Buffer for event-driven reading */
@@ -76,10 +76,10 @@ static volatile sig_atomic_t running = 1;
 static struct config cfg = {
     .base_dev = "iio:device0",
     .lid_dev = "iio:device1", 
-    .poll_ms = 100,
+    .buffer_timeout_ms = 100,
     .daemon_mode = 0,
     .verbose = 0,
-    .sysfs_base = "/sys/devices/platform/chuwi-minibook-x"
+    .sysfs_path = "/sys/devices/platform/chuwi-minibook-x"
 };
 
 /* Signal handlers */
@@ -166,7 +166,7 @@ static int write_vector(const char *name, int x, int y, int z)
     char path[PATH_MAX];
     FILE *f;
     
-    if ((size_t)snprintf(path, sizeof(path), "%s/%s_vec", cfg.sysfs_base, name) >= sizeof(path)) {
+    if ((size_t)snprintf(path, sizeof(path), "%s/%s_vec", cfg.sysfs_path, name) >= sizeof(path)) {
         log_error("Path too long for %s vector", name);
         return -1;
     }
@@ -192,7 +192,7 @@ static int write_mode(const char *mode)
     char path[PATH_MAX];
     FILE *f;
     
-    if ((size_t)snprintf(path, sizeof(path), "%s/mode", cfg.sysfs_base) >= sizeof(path)) {
+    if ((size_t)snprintf(path, sizeof(path), "%s/mode", cfg.sysfs_path) >= sizeof(path)) {
         log_error("Path too long for mode");
         return -1;
     }
@@ -218,7 +218,7 @@ static int write_orientation(const char *orientation)
     char path[PATH_MAX];
     FILE *f;
     
-    if ((size_t)snprintf(path, sizeof(path), "%s/orientation", cfg.sysfs_base) >= sizeof(path)) {
+    if ((size_t)snprintf(path, sizeof(path), "%s/orientation", cfg.sysfs_path) >= sizeof(path)) {
         log_error("Path too long for orientation");
         return -1;
     }
@@ -258,8 +258,8 @@ static int validate_paths(void)
     }
     
     /* Check kernel module sysfs */
-    if (stat(cfg.sysfs_base, &st) < 0) {
-        log_error("Kernel module sysfs not found: %s", cfg.sysfs_base);
+    if (stat(cfg.sysfs_path, &st) < 0) {
+        log_error("Kernel module sysfs not found: %s", cfg.sysfs_path);
         return -1;
     }
     
@@ -279,6 +279,46 @@ static int parse_accel_value(const uint8_t *data) {
     return (int16_t)raw;
 }
 
+/* Ensure IIO sysfs trigger exists (create if needed, but don't manage lifecycle) */
+static int ensure_iio_trigger_exists(void) {
+    char path[PATH_MAX];
+    int trigger_id;
+    
+    /* Check if any trigger already exists (0-9) */
+    for (trigger_id = 0; trigger_id < 10; trigger_id++) {
+        snprintf(path, sizeof(path), "/sys/bus/iio/devices/trigger%d", trigger_id);
+        if (access(path, F_OK) == 0) {
+            log_debug("Using existing trigger: sysfstrig%d", trigger_id);
+            return 0;  /* Found existing trigger */
+        }
+    }
+    
+    /* No trigger exists, create trigger0 */
+    FILE *fp = fopen("/sys/bus/iio/devices/iio_sysfs_trigger/add_trigger", "w");
+    if (!fp) {
+        log_error("Failed to open trigger creation interface: %s", strerror(errno));
+        return -1;
+    }
+    
+    if (fprintf(fp, "0\n") < 0) {
+        log_error("Failed to create trigger: %s", strerror(errno));
+        fclose(fp);
+        return -1;
+    }
+    
+    fclose(fp);
+    
+    /* Verify the trigger was created */
+    snprintf(path, sizeof(path), "/sys/bus/iio/devices/trigger0");
+    if (access(path, F_OK) == 0) {
+        log_info("Created persistent IIO trigger: sysfstrig0");
+        return 0;
+    } else {
+        log_error("Trigger creation failed - trigger0 not found");
+        return -1;
+    }
+}
+
 /* Setup IIO buffer for a device */
 static int setup_iio_buffer(struct iio_buffer *buf, const char *device_name) {
     char path[PATH_MAX];
@@ -296,8 +336,21 @@ static int setup_iio_buffer(struct iio_buffer *buf, const char *device_name) {
         return -1;
     }
     
-    /* Create trigger name - use the available sysfs trigger */
-    snprintf(buf->trigger_name, sizeof(buf->trigger_name), "sysfstrig0");
+    /* Use the first available trigger (we ensured one exists) */
+    int trigger_id;
+    for (trigger_id = 0; trigger_id < 10; trigger_id++) {
+        snprintf(path, sizeof(path), "/sys/bus/iio/devices/trigger%d", trigger_id);
+        if (access(path, F_OK) == 0) {
+            snprintf(buf->trigger_name, sizeof(buf->trigger_name), "sysfstrig%d", trigger_id);
+            log_debug("Using trigger: %s", buf->trigger_name);
+            break;
+        }
+    }
+    
+    if (trigger_id >= 10) {
+        log_error("No trigger found for %s - triggers must be available", device_name);
+        return -1;
+    }
     
     /* Read scan element indices */
     snprintf(path, sizeof(path), "/sys/bus/iio/devices/%s/scan_elements/in_accel_x_index", device_name);
@@ -645,19 +698,24 @@ static const char* get_laptop_mode(double angle) {
 /* Trigger sysfs trigger to generate IIO buffer samples */
 static int trigger_iio_sampling(void) {
     FILE *fp;
+    char path[PATH_MAX];
+    int trigger_id;
     
-    fp = fopen("/sys/bus/iio/devices/trigger0/trigger_now", "w");
-    if (!fp) {
-        return -1;
+    /* Find the first available trigger */
+    for (trigger_id = 0; trigger_id < 10; trigger_id++) {
+        snprintf(path, sizeof(path), "/sys/bus/iio/devices/trigger%d/trigger_now", trigger_id);
+        fp = fopen(path, "w");
+        if (fp) {
+            if (fprintf(fp, "1") >= 0) {
+                fclose(fp);
+                return 0;
+            }
+            fclose(fp);
+        }
     }
     
-    if (fprintf(fp, "1") < 0) {
-        fclose(fp);
-        return -1;
-    }
-    
-    fclose(fp);
-    return 0;
+    log_error("No trigger available for sampling");
+    return -1;
 }
 
 /* Main processing loop with event-driven IIO reading */
@@ -670,8 +728,15 @@ static int run_feeder(void)
     int lid_xs, lid_ys, lid_zs;
     unsigned int error_count = 0;
     const unsigned int max_errors = 10;
-    int poll_timeout = cfg.poll_ms; /* Use configured poll interval for timeout */
+    int poll_timeout = cfg.buffer_timeout_ms; /* Use configured buffer timeout for poll() */
     int base_valid = 0, lid_valid = 0;
+    
+    /* Ensure IIO trigger exists (create if needed, but leave persistent) */
+    log_info("Ensuring IIO trigger is available...");
+    if (ensure_iio_trigger_exists() < 0) {
+        log_error("Failed to ensure IIO trigger exists");
+        return -1;
+    }
     
     log_info("Setting up IIO buffers for event-driven reading...");
     
@@ -877,7 +942,7 @@ static int read_kernel_device_assignments(void)
     /* Read base device assignment */
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wformat-truncation"
-    snprintf(path, sizeof(path), "%s/iio_base_device", cfg.sysfs_base);
+    snprintf(path, sizeof(path), "%s/iio_base_device", cfg.sysfs_path);
 #pragma GCC diagnostic pop
     fp = safe_fopen(path, "r");
     if (!fp) {
@@ -915,7 +980,7 @@ static int read_kernel_device_assignments(void)
     /* Read lid device assignment */
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wformat-truncation"
-    snprintf(path, sizeof(path), "%s/iio_lid_device", cfg.sysfs_base);
+    snprintf(path, sizeof(path), "%s/iio_lid_device", cfg.sysfs_path);
 #pragma GCC diagnostic pop
     fp = safe_fopen(path, "r");
     if (!fp) {
@@ -1038,14 +1103,14 @@ static int load_config_file(const char *config_path)
         if (newline) *newline = '\0';
         
         /* Apply configuration */
-        if (strcmp(key, "POLL_MS") == 0) {
-            unsigned long poll_ms = strtoul(value, NULL, 10);
-            if (poll_ms > 0 && poll_ms <= 10000) {
-                cfg.poll_ms = (unsigned int)poll_ms;
+        if (strcmp(key, "BUFFER_TIMEOUT_MS") == 0) {
+            unsigned long timeout_ms = strtoul(value, NULL, 10);
+            if (timeout_ms > 0 && timeout_ms <= 10000) {
+                cfg.buffer_timeout_ms = (unsigned int)timeout_ms;
             }
         } else if (strcmp(key, "SYSFS_DIR") == 0) {
-            strncpy(cfg.sysfs_base, value, sizeof(cfg.sysfs_base) - 1);
-            cfg.sysfs_base[sizeof(cfg.sysfs_base) - 1] = '\0';
+            strncpy(cfg.sysfs_path, value, sizeof(cfg.sysfs_path) - 1);
+            cfg.sysfs_path[sizeof(cfg.sysfs_path) - 1] = '\0';
         }
     }
     
@@ -1062,8 +1127,8 @@ static void usage(void)
     printf("Device assignments are automatically detected from kernel module.\n");
     printf("\n");
     printf("Options:\n");
-    printf("  -p, --poll-ms MS         Polling interval in milliseconds (default: %u)\n", cfg.poll_ms);
-    printf("  -s, --sysfs-path PATH    Kernel module sysfs path (default: %s)\n", cfg.sysfs_base);
+    printf("  -t, --timeout-ms MS      Buffer read timeout in milliseconds (default: %u)\n", cfg.buffer_timeout_ms);
+    printf("  -s, --sysfs-path PATH    Kernel module sysfs path (default: %s)\n", cfg.sysfs_path);
     printf("  -d, --daemon             Run as daemon\n");
     printf("  -v, --verbose            Verbose logging\n");
     printf("  -h, --help               Show this help\n");
@@ -1071,14 +1136,14 @@ static void usage(void)
     printf("\n");
     printf("Examples:\n");
     printf("  %s                       # Use defaults with auto-detected devices\n", PROGRAM_NAME);
-    printf("  %s -p 50 -v             # 50ms polling, verbose\n", PROGRAM_NAME);
+    printf("  %s -t 50 -v             # 50ms buffer timeout, verbose\n", PROGRAM_NAME);
 }
 
 /* Parse command line arguments */
 static int parse_args(int argc, char **argv)
 {
     static struct option long_options[] = {
-        {"poll-ms",     required_argument, 0, 'p'},
+        {"timeout-ms",  required_argument, 0, 't'},
         {"sysfs-path",  required_argument, 0, 's'},
         {"daemon",      no_argument,       0, 'd'},
         {"verbose",     no_argument,       0, 'v'},
@@ -1091,24 +1156,24 @@ static int parse_args(int argc, char **argv)
     char *endptr;
     unsigned long val;
     
-    while ((c = getopt_long(argc, argv, "p:s:dvhV", long_options, NULL)) != -1) {
+    while ((c = getopt_long(argc, argv, "t:s:dvhV", long_options, NULL)) != -1) {
         switch (c) {
-            case 'p':
+            case 't':
                 errno = 0;
                 val = strtoul(optarg, &endptr, 10);
                 if (errno != 0 || endptr == optarg || val == 0 || val > 10000) {
-                    log_error("Invalid poll interval: %s (must be 1-10000 ms)", optarg);
+                    log_error("Invalid buffer timeout: %s (must be 1-10000 ms)", optarg);
                     return -1;
                 }
-                cfg.poll_ms = (unsigned int)val;
+                cfg.buffer_timeout_ms = (unsigned int)val;
                 break;
                 
             case 's':
-                if (strlen(optarg) >= sizeof(cfg.sysfs_base)) {
+                if (strlen(optarg) >= sizeof(cfg.sysfs_path)) {
                     log_error("Sysfs path too long");
                     return -1;
                 }
-                strcpy(cfg.sysfs_base, optarg);
+                strcpy(cfg.sysfs_path, optarg);
                 break;
                 
             case 'd':
@@ -1178,29 +1243,18 @@ int main(int argc, char **argv)
     char sysfs_path[PATH_MAX];
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wformat-truncation"
-    snprintf(sysfs_path, sizeof(sysfs_path), "%s/base_vec", cfg.sysfs_base);
+    snprintf(sysfs_path, sizeof(sysfs_path), "%s/base_vec", cfg.sysfs_path);
 #pragma GCC diagnostic pop
     if (wait_for_path(sysfs_path, 30) < 0) {
-        log_error("Kernel module sysfs interface not found: %s", cfg.sysfs_base);
+        log_error("Kernel module sysfs interface not found: %s", cfg.sysfs_path);
         return 1;
     }
     
-    /* Read device assignments from kernel module */
+    /* Read device assignments from kernel module - REQUIRED */
     if (read_kernel_device_assignments() < 0) {
-        log_info("Kernel device assignments not available, falling back to auto-detection...");
-        
-        /* Auto-detect devices if kernel assignments failed */
-        char base_path[PATH_MAX], lid_path[PATH_MAX];
-        snprintf(base_path, sizeof(base_path), "/sys/bus/iio/devices/%s", cfg.base_dev);
-        snprintf(lid_path, sizeof(lid_path), "/sys/bus/iio/devices/%s", cfg.lid_dev);
-        
-        if (access(base_path, F_OK) != 0 || access(lid_path, F_OK) != 0) {
-            log_info("Configured devices not found, attempting auto-detection...");
-            if (auto_detect_devices() < 0) {
-                log_error("Failed to detect accelerometer devices");
-                return 1;
-            }
-        }
+        log_error("Kernel device assignments not available - cannot continue");
+        log_error("Make sure the kernel module is loaded and devices are detected");
+        return 1;
     }
     
     /* Wait for devices to be ready */
@@ -1223,8 +1277,8 @@ int main(int argc, char **argv)
     }
     
     log_info("Starting %s %s", PROGRAM_NAME, VERSION);
-    log_info("Configuration: base=%s lid=%s poll=%ums sysfs=%s", 
-             cfg.base_dev, cfg.lid_dev, cfg.poll_ms, cfg.sysfs_base);
+    log_info("Configuration: base=%s lid=%s timeout=%ums sysfs=%s", 
+             cfg.base_dev, cfg.lid_dev, cfg.buffer_timeout_ms, cfg.sysfs_path);
     
     /* Validate paths */
     if (validate_paths() < 0) {
