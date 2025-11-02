@@ -75,6 +75,11 @@ struct accel_sample {
 
 /* Global state */
 static volatile sig_atomic_t running = 1;
+
+/* Mode stability tracking to prevent jumping between tablet/closing */
+static const char* last_stable_mode = "laptop";  /* Default to laptop mode */
+static double last_stable_mode_angle = 90.0;     /* Default to 90° hinge angle */
+
 static struct config cfg = {
     .base_dev = "iio:device0",
     .lid_dev = "iio:device1", 
@@ -727,6 +732,43 @@ static const char* get_laptop_mode(double angle) {
     }
 }
 
+/* Get stable laptop mode with simple sequential validation */
+/* Only allows transitions between adjacent modes: closing <-> laptop <-> flat <-> tent <-> tablet */
+static const char* get_stable_laptop_mode(double angle) {
+    const char* new_mode = get_laptop_mode(angle);
+    
+    /* If mode hasn't changed, update tracking and return */
+    if (strcmp(new_mode, last_stable_mode) == 0) {
+        last_stable_mode_angle = angle;
+        return new_mode;
+    }
+    
+    /* Check if this is a valid sequential transition */
+    int valid_transition = 0;
+    
+    if (strcmp(last_stable_mode, "closing") == 0) {
+        valid_transition = (strcmp(new_mode, "laptop") == 0);
+    } else if (strcmp(last_stable_mode, "laptop") == 0) {
+        valid_transition = (strcmp(new_mode, "closing") == 0 || strcmp(new_mode, "flat") == 0);
+    } else if (strcmp(last_stable_mode, "flat") == 0) {
+        valid_transition = (strcmp(new_mode, "laptop") == 0 || strcmp(new_mode, "tent") == 0);
+    } else if (strcmp(last_stable_mode, "tent") == 0) {
+        valid_transition = (strcmp(new_mode, "flat") == 0 || strcmp(new_mode, "tablet") == 0);
+    } else if (strcmp(last_stable_mode, "tablet") == 0) {
+        valid_transition = (strcmp(new_mode, "tent") == 0 || strcmp(new_mode, "closing") == 0);
+    }
+    
+    if (valid_transition) {
+        log_debug("Mode transition: %s -> %s (angle %.1f°)", last_stable_mode, new_mode, angle);
+        last_stable_mode = new_mode;
+        last_stable_mode_angle = angle;
+        return new_mode;
+    } else {
+        log_debug("Invalid mode jump blocked: %s -> %s (angle %.1f°)", last_stable_mode, new_mode, angle);
+        return last_stable_mode;
+    }
+}
+
 /* Trigger sysfs trigger to generate IIO buffer samples */
 static int trigger_iio_sampling(void) {
     FILE *fp;
@@ -874,7 +916,7 @@ static int run_feeder(void)
         /* Calculate hinge angle if we have valid readings from both sensors */
         if (base_valid && lid_valid) {
             double angle = calculate_hinge_angle(&base_sample, &lid_sample);
-            const char* mode = get_laptop_mode(angle);
+            const char* mode = get_stable_laptop_mode(angle);
             
             /* Get device orientation from lid sensor (screen orientation) */
             int lid_orientation = get_device_orientation(lid_sample.x, lid_sample.y, lid_sample.z);
