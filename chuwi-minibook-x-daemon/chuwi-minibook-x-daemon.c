@@ -747,15 +747,20 @@ static const char* get_stable_laptop_mode(double angle) {
     int valid_transition = 0;
     
     if (strcmp(last_stable_mode, "closing") == 0) {
+        /* closing is endpoint - can only go to laptop */
         valid_transition = (strcmp(new_mode, "laptop") == 0);
     } else if (strcmp(last_stable_mode, "laptop") == 0) {
+        /* laptop can go to closing or flat */
         valid_transition = (strcmp(new_mode, "closing") == 0 || strcmp(new_mode, "flat") == 0);
     } else if (strcmp(last_stable_mode, "flat") == 0) {
+        /* flat can go to laptop or tent */
         valid_transition = (strcmp(new_mode, "laptop") == 0 || strcmp(new_mode, "tent") == 0);
     } else if (strcmp(last_stable_mode, "tent") == 0) {
+        /* tent can go to flat or tablet */
         valid_transition = (strcmp(new_mode, "flat") == 0 || strcmp(new_mode, "tablet") == 0);
     } else if (strcmp(last_stable_mode, "tablet") == 0) {
-        valid_transition = (strcmp(new_mode, "tent") == 0 || strcmp(new_mode, "closing") == 0);
+        /* tablet is endpoint - can only go to tent */
+        valid_transition = (strcmp(new_mode, "tent") == 0);
     }
     
     if (valid_transition) {
