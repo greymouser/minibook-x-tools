@@ -719,10 +719,10 @@ static double calculate_hinge_angle(const struct accel_sample *base, const struc
 static const char* get_laptop_mode(double angle) {
     if (angle < 0) {
         return "laptop";        /* Invalid angle - default to laptop */
-    } else if (angle >= 0 && angle < 30) {
-        return "closing";       /* 0-30: Closing/nearly closed */
-    } else if (angle >= 30 && angle < 135) {
-        return "laptop";        /* 30-135: Normal laptop mode (~90 degrees) */
+    } else if (angle >= 0 && angle < 45) {
+        return "closing";       /* 0-45: Closing/nearly closed */
+    } else if (angle >= 45 && angle < 135) {
+        return "laptop";        /* 45-135: Normal laptop mode (~90 degrees) */
     } else if (angle >= 135 && angle < 225) {
         return "flat";          /* 135-225: Flat/tablet mode (~180 degrees) */
     } else if (angle >= 225 && angle < 315) {
