@@ -43,6 +43,8 @@
 
 /* Forward declarations */
 static int find_iio_device_for_i2c(int bus, int addr, char *device_name, size_t name_size);
+static int write_mode(const char *mode);
+static int write_orientation(const char *orientation);
 
 /* Configuration */
 struct config {
@@ -83,12 +85,17 @@ static struct config cfg = {
 };
 
 /* Signal handlers */
+static void cleanup_and_exit(void);  /* Forward declaration */
+
 static void signal_handler(int sig)
 {
     switch (sig) {
         case SIGTERM:
         case SIGINT:
+            /* Use printf since log macros aren't available yet */
+            printf("[INFO] Received signal %d, shutting down...\n", sig);
             running = 0;
+            cleanup_and_exit();
             break;
         case SIGHUP:
             /* Reload config in the future */
@@ -236,6 +243,31 @@ static int write_orientation(const char *orientation)
     
     log_debug("Wrote orientation: %s", orientation);
     return 0;
+}
+
+/* Cleanup function to restore laptop mode on exit */
+/* This prevents getting locked out in tablet mode when daemon exits */
+static void cleanup_and_exit(void)
+{
+    static int cleanup_done = 0;
+    
+    /* Prevent multiple calls */
+    if (cleanup_done) return;
+    cleanup_done = 1;
+    
+    log_info("Performing cleanup: forcing laptop mode to prevent lockout");
+    
+    /* Force laptop mode as failsafe */
+    if (write_mode("laptop") < 0) {
+        log_warn("Failed to restore laptop mode during cleanup");
+    }
+    
+    /* Force landscape orientation as safe default */
+    if (write_orientation("landscape") < 0) {
+        log_warn("Failed to restore landscape orientation during cleanup");
+    }
+    
+    log_info("Cleanup complete - laptop mode restored");
 }
 
 /* Validate that paths exist and are accessible */
@@ -1192,6 +1224,11 @@ static int setup_signals(void)
 
 int main(int argc, char **argv)
 {
+    /* Register cleanup function to run on normal exit */
+    if (atexit(cleanup_and_exit) != 0) {
+        log_warn("Failed to register cleanup function");
+    }
+    
     /* Load configuration file first */
     load_config_file("/etc/default/chuwi-minibook-x-daemon");
     
@@ -1249,6 +1286,9 @@ int main(int argc, char **argv)
     
     /* Run main loop */
     int ret = run_feeder();
+    
+    log_info("Main loop finished, performing cleanup...");
+    cleanup_and_exit();
     
     log_info("Exiting with code %d", ret == 0 ? 0 : 1);
     return ret == 0 ? 0 : 1;
