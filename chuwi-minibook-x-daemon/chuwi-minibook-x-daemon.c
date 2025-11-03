@@ -80,6 +80,9 @@ static volatile sig_atomic_t running = 1;
 static const char* last_stable_mode = "laptop";  /* Default to laptop mode */
 static double last_stable_mode_angle = 90.0;     /* Default to 90° hinge angle */
 
+/* Last known orientation for tablet mode reading protection */
+static const char* last_known_orientation = "landscape";  /* Default orientation */
+
 static struct config cfg = {
     .base_dev = "iio:device0",
     .lid_dev = "iio:device1", 
@@ -575,6 +578,28 @@ static void cleanup_iio_buffer(struct iio_buffer *buf) {
     log_info("IIO buffer cleaned up for %s", buf->device_name);
 }
 
+/* Calculate the tilt angle of the device from horizontal plane */
+/* Returns angle in degrees: 0° = flat, 90° = vertical */
+static double calculate_tilt_angle(double x, double y, double z) {
+    /* Calculate the angle between the Z-axis and the gravity vector */
+    double magnitude = sqrt(x * x + y * y + z * z);
+    if (magnitude < 1.0) {
+        return -1.0; /* Invalid reading */
+    }
+    
+    /* Z-component normalized gives cos(tilt_angle) */
+    double cos_tilt = fabs(z) / magnitude;
+    
+    /* Clamp to valid range to avoid numerical errors */
+    if (cos_tilt > 1.0) cos_tilt = 1.0;
+    if (cos_tilt < 0.0) cos_tilt = 0.0;
+    
+    /* Convert to degrees */
+    double tilt_angle = acos(cos_tilt) * 180.0 / M_PI;
+    
+    return tilt_angle;
+}
+
 /* Determine orientation of a device based on accelerometer readings */
 /* Returns: 0=X-up, 1=Y-up, 2=Z-up, 3=X-down, 4=Y-down, 5=Z-down */
 static int get_device_orientation(double x, double y, double z) {
@@ -609,6 +634,37 @@ static const char* get_platform_orientation(int orientation_code) {
         default:
             return "landscape";  /* Default to landscape for edge cases */
     }
+}
+
+/* Get orientation with tablet mode reading protection */
+/* Prevents orientation changes FROM portrait in tablet mode when tilted > 45° for reading stability */
+static const char* get_orientation_with_tablet_protection(double x, double y, double z, const char* current_mode) {
+    /* Calculate current orientation first */
+    int orientation = get_device_orientation(x, y, z);
+    const char* orientation_name = get_platform_orientation(orientation);
+    
+    /* Calculate tilt angle for tablet mode protection */
+    double tilt_angle = calculate_tilt_angle(x, y, z);
+    
+    /* Special case: In tablet mode, if currently in portrait and tilted for reading, 
+       prevent switching away from portrait to avoid reading interruption */
+    if (strcmp(current_mode, "tablet") == 0 && 
+        tilt_angle > 45.0 && 
+        last_known_orientation != NULL && 
+        (strcmp(last_known_orientation, "portrait") == 0 || strcmp(last_known_orientation, "portrait-flipped") == 0) &&  /* Currently in portrait */
+        (strcmp(orientation_name, "landscape") == 0 || strcmp(orientation_name, "landscape-flipped") == 0)) {         /* Trying to switch to landscape */
+        
+        log_debug("Tablet reading protection: maintaining %s (tilt %.1f° > 45°), blocking switch to %s", 
+                 last_known_orientation, tilt_angle, orientation_name);
+        return last_known_orientation;
+    }
+    
+    /* Normal orientation detection - update last known orientation */
+    last_known_orientation = orientation_name;
+    
+    log_debug("Normal orientation: %s (tilt %.1f°, mode %s)", 
+             orientation_name, tilt_angle, current_mode);
+    return orientation_name;
 }
 
 /* Calculate hinge angle from base and lid accelerometer readings */
@@ -743,11 +799,11 @@ static const char* get_stable_laptop_mode(double angle) {
         return new_mode;
     }
     
-    /* Check if this is a valid sequential transition */
+    /* Check if this is a valid transition */
     int valid_transition = 0;
     
     if (strcmp(last_stable_mode, "closing") == 0) {
-        /* closing is endpoint - can only go to laptop */
+        /* closing can go to laptop */
         valid_transition = (strcmp(new_mode, "laptop") == 0);
     } else if (strcmp(last_stable_mode, "laptop") == 0) {
         /* laptop can go to closing or flat */
@@ -759,7 +815,7 @@ static const char* get_stable_laptop_mode(double angle) {
         /* tent can go to flat or tablet */
         valid_transition = (strcmp(new_mode, "flat") == 0 || strcmp(new_mode, "tablet") == 0);
     } else if (strcmp(last_stable_mode, "tablet") == 0) {
-        /* tablet is endpoint - can only go to tent */
+        /* tablet can go to tent */
         valid_transition = (strcmp(new_mode, "tent") == 0);
     }
     
@@ -923,13 +979,14 @@ static int run_feeder(void)
             double angle = calculate_hinge_angle(&base_sample, &lid_sample);
             const char* mode = get_stable_laptop_mode(angle);
             
-            /* Get device orientation from lid sensor (screen orientation) */
-            int lid_orientation = get_device_orientation(lid_sample.x, lid_sample.y, lid_sample.z);
-            const char* orientation = get_platform_orientation(lid_orientation);
+            /* Get device orientation with tablet mode reading protection */
+            /* In tablet mode, prevents orientation changes when tilted > 45° for reading stability */
+            const char* orientation = get_orientation_with_tablet_protection(
+                lid_sample.x, lid_sample.y, lid_sample.z, mode);
             
             if (angle >= 0) {
-                log_info("Hinge angle: %.1f° (%s) - Lid orientation code: %d (%s) - Base[%d,%d,%d] Lid[%d,%d,%d]", 
-                        angle, mode, lid_orientation, orientation,
+                log_info("Hinge angle: %.1f° (%s) - Orientation: %s - Base[%d,%d,%d] Lid[%d,%d,%d]", 
+                        angle, mode, orientation,
                         base_sample.x, base_sample.y, base_sample.z,
                         lid_sample.x, lid_sample.y, lid_sample.z);
                 
@@ -1330,6 +1387,9 @@ int main(int argc, char **argv)
         log_error("Path validation failed");
         return 1;
     }
+    
+    /* Initialize last known orientation to landscape (safe default) */
+    last_known_orientation = "landscape";
     
     /* Run main loop */
     int ret = run_feeder();

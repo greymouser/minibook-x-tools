@@ -1,30 +1,50 @@
 #!/bin/bash
-# Test script for orientation and mode stability system
-# Tests both working orientation detection and sequential mode validation
 
-echo "Testing orientation and mode stability system..."
-echo "This will start the daemon with verbose logging for 30 seconds"
-echo ""
-echo "Current system features:"
-echo "  ✓ Working orientation detection (from HEAD~1)"
-echo "  ✓ Cleanup-on-exit to prevent tablet mode lockout"
-echo "  ✓ Sequential mode validation (prevents mode jumping)"
-echo ""
-echo "Correct mode sequence: closing ↔ laptop ↔ flat ↔ tent ↔ tablet"
-echo "  - closing and tablet are endpoints (no wrapping)"
-echo "  - Each mode can only transition to adjacent modes"
-echo ""
-echo "Try different orientations and hinge positions"
-echo "Press Enter to start test..."
-read
+# Test script for Chuwi MiniBook X mode and orientation stability
+# 
+# TABLET MODE READING PROTECTION
+# ==============================
+# Current implementation provides targeted protection for reading scenarios:
+# - In tablet mode only: prevents orientation changes when tilted > 45°
+# - Maintains last known orientation during protected periods
+# - Normal orientation detection for all other modes and angles
+# 
+# Reading scenarios protected:
+# - Holding tablet above you in bed (>45° upward tilt)
+# - Laying tablet flat on table and tilting up (>45° tilt)
+# - Any tablet mode position beyond 45° tilt angle
 
-# Start daemon with verbose debugging
-echo "Starting daemon with debug logging..."
-sudo timeout 30s ./chuwi-minibook-x-daemon -v -d
+echo "=== Chuwi MiniBook X Mode Stability Test ==="
+echo "Testing tablet mode reading protection (>45° tilt threshold)"
+echo
 
-echo ""
-echo "Test completed. Check the log output above for:"
-echo "  - 'Mode transition:' for valid sequential mode changes"
-echo "  - 'Invalid mode jump blocked:' for prevented erratic jumps"
-echo "  - Normal orientation updates"
-echo "  - Cleanup messages when daemon exits"
+if [ ! -f "./chuwi-minibook-x-daemon" ]; then
+    echo "Error: chuwi-minibook-x-daemon binary not found"
+    echo "Run 'make' first to build the daemon"
+    exit 1
+fi
+
+# Check if we can read kernel module interface
+SYSFS_PATH="/sys/module/chuwi_minibook_x"
+if [ ! -d "$SYSFS_PATH" ]; then
+    echo "Warning: Kernel module not loaded or not found at $SYSFS_PATH"
+    echo "Some tests may not work properly"
+fi
+
+echo "Starting daemon in test mode..."
+echo "Monitor the output for:"
+echo "- Mode detection (closing/laptop/flat/tent/tablet)"
+echo "- Orientation changes (landscape/portrait/inverted/etc)"
+echo "- Tablet mode reading protection messages"
+echo "- Tilt angle calculations"
+echo
+echo "Test scenarios:"
+echo "1. Normal laptop mode - should detect orientation changes normally"
+echo "2. Tablet mode flat - should detect orientation changes normally"
+echo "3. Tablet mode tilted >45° - should maintain last orientation (PROTECTED)"
+echo
+echo "Press Ctrl+C to stop the test"
+echo
+
+# Run the daemon with debug output
+exec ./chuwi-minibook-x-daemon
