@@ -76,6 +76,21 @@ struct accel_sample {
 /* Global state */
 static volatile sig_atomic_t running = 1;
 
+/* Mode boundary angles - the core thresholds for mode detection */
+static const double MODE_CLOSING_MAX = 45.0;    /* 0°-45°: Closing mode */
+static const double MODE_LAPTOP_MAX = 135.0;    /* 45°-135°: Laptop mode */
+static const double MODE_FLAT_MAX = 225.0;      /* 135°-225°: Flat mode */
+static const double MODE_TENT_MAX = 315.0;      /* 225°-315°: Tent mode */
+                                                 /* 315°-360°: Tablet mode */
+
+/* Hysteresis amount to prevent spurious mode switching */
+static const double MODE_HYSTERESIS = 10.0;     /* Degrees of hysteresis around boundaries */
+
+/* Spurious data filtering - require consistency before mode changes */
+static const int MODE_STABILITY_SAMPLES = 3;    /* Number of consistent readings required */
+static int stability_count = 0;                 /* Current consecutive count */
+static const char* candidate_mode = NULL;       /* Mode candidate being evaluated */
+
 /* Mode stability tracking to prevent jumping between tablet/closing */
 static const char* last_stable_mode = "laptop";  /* Default to laptop mode */
 static double last_stable_mode_angle = 90.0;     /* Default to 90° hinge angle */
@@ -771,31 +786,80 @@ static double calculate_hinge_angle(const struct accel_sample *base, const struc
     return angle_deg;
 }
 
-/* Get laptop mode based on hinge angle */
-static const char* get_laptop_mode(double angle) {
+/* Get laptop mode based on hinge angle with hysteresis to prevent spurious mode changes */
+static const char* get_laptop_mode(double angle, const char* current_mode) {
     if (angle < 0) {
         return "laptop";        /* Invalid angle - default to laptop */
-    } else if (angle >= 0 && angle < 45) {
-        return "closing";       /* 0-45: Closing/nearly closed */
-    } else if (angle >= 45 && angle < 135) {
-        return "laptop";        /* 45-135: Normal laptop mode (~90 degrees) */
-    } else if (angle >= 135 && angle < 225) {
-        return "flat";          /* 135-225: Flat/tablet mode (~180 degrees) */
-    } else if (angle >= 225 && angle < 315) {
-        return "tent";          /* 225-315: Tent mode (~270 degrees) */
+    }
+    
+    /* Use hysteresis: different thresholds for entering vs staying in a mode
+     * This prevents rapid mode switching due to sensor noise around boundaries */
+    
+    if (strcmp(current_mode, "closing") == 0) {
+        /* In closing mode: need significant movement to exit */
+        if (angle >= (MODE_CLOSING_MAX + MODE_HYSTERESIS)) {
+            return "laptop";
+        }
+        return "closing";
+    } else if (strcmp(current_mode, "laptop") == 0) {
+        /* In laptop mode: need significant movement to exit */
+        if (angle < (MODE_CLOSING_MAX - MODE_HYSTERESIS)) {
+            return "closing";
+        } else if (angle >= (MODE_LAPTOP_MAX + MODE_HYSTERESIS)) {
+            return "flat";
+        }
+        return "laptop";
+    } else if (strcmp(current_mode, "flat") == 0) {
+        /* In flat mode: need significant movement to exit */
+        if (angle < (MODE_LAPTOP_MAX - MODE_HYSTERESIS)) {
+            return "laptop";
+        } else if (angle >= (MODE_FLAT_MAX + MODE_HYSTERESIS)) {
+            return "tent";
+        }
+        return "flat";
+    } else if (strcmp(current_mode, "tent") == 0) {
+        /* In tent mode: need significant movement to exit */
+        if (angle < (MODE_FLAT_MAX - MODE_HYSTERESIS)) {
+            return "flat";
+        } else if (angle >= (MODE_TENT_MAX + MODE_HYSTERESIS)) {
+            return "tablet";
+        }
+        return "tent";
+    } else if (strcmp(current_mode, "tablet") == 0) {
+        /* In tablet mode: need significant movement to exit */
+        if (angle < (MODE_TENT_MAX - MODE_HYSTERESIS)) {
+            return "tent";
+        }
+        return "tablet";
+    }
+    
+    /* Fallback to original logic if current_mode is unknown */
+    if (angle >= 0 && angle < MODE_CLOSING_MAX) {
+        return "closing";       
+    } else if (angle >= MODE_CLOSING_MAX && angle < MODE_LAPTOP_MAX) {
+        return "laptop";        
+    } else if (angle >= MODE_LAPTOP_MAX && angle < MODE_FLAT_MAX) {
+        return "flat";          
+    } else if (angle >= MODE_FLAT_MAX && angle < MODE_TENT_MAX) {
+        return "tent";          
     } else {
-        return "tablet";        /* 315-360: Fully folded tablet */
+        return "tablet";        
     }
 }
 
-/* Get stable laptop mode with simple sequential validation */
+/* Get stable laptop mode with hysteresis, sequential validation, and spurious data filtering */
 /* Only allows transitions between adjacent modes: closing <-> laptop <-> flat <-> tent <-> tablet */
+/* Uses hysteresis to prevent spurious mode changes from sensor noise */
+/* Requires multiple consistent readings before allowing mode changes */
 static const char* get_stable_laptop_mode(double angle) {
-    const char* new_mode = get_laptop_mode(angle);
+    const char* new_mode = get_laptop_mode(angle, last_stable_mode);
     
     /* If mode hasn't changed, update tracking and return */
     if (strcmp(new_mode, last_stable_mode) == 0) {
         last_stable_mode_angle = angle;
+        /* Reset stability tracking since we're staying in current mode */
+        stability_count = 0;
+        candidate_mode = NULL;
         return new_mode;
     }
     
@@ -819,14 +883,42 @@ static const char* get_stable_laptop_mode(double angle) {
         valid_transition = (strcmp(new_mode, "tent") == 0);
     }
     
-    if (valid_transition) {
-        log_debug("Mode transition: %s -> %s (angle %.1f°)", last_stable_mode, new_mode, angle);
-        last_stable_mode = new_mode;
-        last_stable_mode_angle = angle;
-        return new_mode;
-    } else {
+    if (!valid_transition) {
         log_debug("Invalid mode jump blocked: %s -> %s (angle %.1f°)", last_stable_mode, new_mode, angle);
+        /* Reset stability tracking since this transition is not allowed */
+        stability_count = 0;
+        candidate_mode = NULL;
         return last_stable_mode;
+    }
+    
+    /* Valid transition - now check for stability to prevent spurious changes */
+    if (candidate_mode == NULL || strcmp(candidate_mode, new_mode) != 0) {
+        /* New candidate mode - start stability tracking */
+        candidate_mode = new_mode;
+        stability_count = 1;
+        log_debug("New mode candidate: %s (stability 1/%d, angle %.1f°)", 
+                 new_mode, MODE_STABILITY_SAMPLES, angle);
+        return last_stable_mode;  /* Stay in current mode until stable */
+    } else {
+        /* Same candidate mode - increment stability count */
+        stability_count++;
+        log_debug("Mode candidate: %s (stability %d/%d, angle %.1f°)", 
+                 new_mode, stability_count, MODE_STABILITY_SAMPLES, angle);
+        
+        if (stability_count >= MODE_STABILITY_SAMPLES) {
+            /* Candidate is stable - make the transition */
+            log_debug("Mode transition confirmed: %s -> %s (angle %.1f°)", 
+                     last_stable_mode, new_mode, angle);
+            last_stable_mode = new_mode;
+            last_stable_mode_angle = angle;
+            /* Reset stability tracking */
+            stability_count = 0;
+            candidate_mode = NULL;
+            return new_mode;
+        } else {
+            /* Not stable yet - stay in current mode */
+            return last_stable_mode;
+        }
     }
 }
 
