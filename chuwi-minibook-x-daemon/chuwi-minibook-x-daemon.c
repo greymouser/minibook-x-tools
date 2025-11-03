@@ -25,6 +25,7 @@
 #include <fcntl.h>
 #include <endian.h>
 #include <stdint.h>
+#include <stdbool.h>
 #include <sys/types.h>
 
 #ifndef M_PI
@@ -85,11 +86,22 @@ static const double MODE_TENT_MAX = 315.0;      /* 225°-315°: Tent mode */
 
 /* Hysteresis amount to prevent spurious mode switching */
 static const double MODE_HYSTERESIS = 10.0;     /* Degrees of hysteresis around boundaries */
+static const double TABLET_MODE_HYSTERESIS = 25.0;  /* Extra large hysteresis for tablet mode stability */
 
 /* Spurious data filtering - require consistency before mode changes */
 static const int MODE_STABILITY_SAMPLES = 3;    /* Number of consistent readings required */
+static const int TABLET_MODE_STABILITY_SAMPLES = 5;  /* Extra stability requirement for tablet mode exits */
+
+/* Orientation change detection to prevent mode changes during device rotation */
+static int last_detected_orientation = -1;            /* Track orientation changes */
+static int orientation_freeze_samples = 0;            /* Freeze mode changes during orientation transitions */
+static const int ORIENTATION_FREEZE_DURATION = 8;     /* Number of samples to freeze after orientation change */
+static const int ORIENTATION_UNKNOWN = -1;            /* Unknown orientation constant */
 static int stability_count = 0;                 /* Current consecutive count */
 static const char* candidate_mode = NULL;       /* Mode candidate being evaluated */
+
+/* Angle change rate limiting to prevent spurious calculations */
+static const double MAX_ANGLE_CHANGE_PER_SAMPLE = 45.0;  /* Maximum degrees change per reading */
 
 /* Mode stability tracking to prevent jumping between tablet/closing */
 static const char* last_stable_mode = "laptop";  /* Default to laptop mode */
@@ -661,35 +673,59 @@ static const char* get_orientation_with_tablet_protection(double x, double y, do
     /* Calculate tilt angle for tablet mode protection */
     double tilt_angle = calculate_tilt_angle(x, y, z);
     
-    /* Special case: In tablet mode, if currently in portrait and tilted for reading, 
-       prevent switching away from portrait to avoid reading interruption */
+    /* Enhanced tablet reading protection: Only protect against orientation changes during 
+       actual reading scenarios with stability (not during active rotation) */
+    static const char* stable_orientation = NULL;
+    static int stable_count = 0;
+    static const int STABILITY_THRESHOLD = 10;  /* Need 10 consistent samples */
+    
+    /* Track orientation stability */
+    if (stable_orientation == NULL || strcmp(orientation_name, stable_orientation) != 0) {
+        stable_orientation = orientation_name;
+        stable_count = 1;
+    } else {
+        stable_count++;
+    }
+    
+    /* Only apply protection if:
+     * 1. In tablet mode
+     * 2. High tilt angle (reading position)  
+     * 3. Currently stable in portrait (not actively rotating)
+     * 4. Trying to switch to landscape
+     * 5. Have been stable for a while (not just started rotation) */
     if (strcmp(current_mode, "tablet") == 0 && 
-        tilt_angle > 45.0 && 
+        tilt_angle > 70.0 &&  /* Higher threshold for actual reading positions */
+        stable_count >= STABILITY_THRESHOLD &&  /* Must be stable, not actively rotating */
         last_known_orientation != NULL && 
         (strcmp(last_known_orientation, "portrait") == 0 || strcmp(last_known_orientation, "portrait-flipped") == 0) &&  /* Currently in portrait */
         (strcmp(orientation_name, "landscape") == 0 || strcmp(orientation_name, "landscape-flipped") == 0)) {         /* Trying to switch to landscape */
         
-        log_debug("Tablet reading protection: maintaining %s (tilt %.1f° > 45°), blocking switch to %s", 
-                 last_known_orientation, tilt_angle, orientation_name);
+        log_debug("Tablet reading protection: maintaining %s (tilt %.1f° > 70°, stable %d samples), blocking switch to %s", 
+                 last_known_orientation, tilt_angle, stable_count, orientation_name);
         return last_known_orientation;
     }
     
     /* Normal orientation detection - update last known orientation */
     last_known_orientation = orientation_name;
     
-    log_debug("Normal orientation: %s (tilt %.1f°, mode %s)", 
-             orientation_name, tilt_angle, current_mode);
+    log_debug("Normal orientation: %s (tilt %.1f°, mode %s, stable %d)", 
+             orientation_name, tilt_angle, current_mode, stable_count);
     return orientation_name;
 }
 
 /* Calculate hinge angle from base and lid accelerometer readings */
-/* Uses orientation-aware calculation to work in any laptop orientation */
+/* Uses orientation-independent dot product calculation with direction detection for full 0-360° range */
 static double calculate_hinge_angle(const struct accel_sample *base, const struct accel_sample *lid) {
+    static double last_base_angle = -1.0;
+    static bool was_increasing = true;
+    static bool definitely_folding_back = false;  /* Sticky fold-back state */
+    
     /* Convert raw accelerometer values to normalized vectors */
     double base_magnitude = sqrt(base->x * base->x + base->y * base->y + base->z * base->z);
     double lid_magnitude = sqrt(lid->x * lid->x + lid->y * lid->y + lid->z * lid->z);
     
     if (base_magnitude < 1.0 || lid_magnitude < 1.0) {
+        log_debug("Invalid accelerometer readings: base_mag=%.3f, lid_mag=%.3f", base_magnitude, lid_magnitude);
         return -1.0; /* Invalid reading */
     }
     
@@ -706,84 +742,170 @@ static double calculate_hinge_angle(const struct accel_sample *base, const struc
         lid->z / lid_magnitude
     };
     
-    /* Get orientations to determine current laptop position */
-    int base_orientation = get_device_orientation(base->x, base->y, base->z);
-    // Note: lid_orientation available for future use
+    /* Calculate the dot product between normalized vectors */
+    /* This gives us the cosine of the angle between the two accelerometer vectors */
+    double dot_product = base_norm[0]*lid_norm[0] + base_norm[1]*lid_norm[1] + base_norm[2]*lid_norm[2];
     
-    /* Debug: Show raw values and orientation calculation */
-    double abs_x = abs(base->x);
-    double abs_y = abs(base->y);
-    double abs_z = abs(base->z);
-    log_debug("Raw base values: X=%d Y=%d Z=%d, Abs values: X=%.1f Y=%.1f Z=%.1f", 
-             base->x, base->y, base->z, abs_x, abs_y, abs_z);
-    log_debug("Orientation decision: abs_z > abs_x && abs_z > abs_y = %s, abs_y > abs_x = %s", 
-             (abs_z > abs_x && abs_z > abs_y) ? "true" : "false",
-             (abs_y > abs_x) ? "true" : "false");
+    /* Clamp to valid range to avoid numerical errors in acos() */
+    if (dot_product > 1.0) dot_product = 1.0;
+    if (dot_product < -1.0) dot_product = -1.0;
     
-    /* The hinge physically runs along the Y-axis (left-right) of the laptop.
-     * The key insight: Y is ALWAYS the physical hinge axis regardless of laptop orientation.
-     * For proper hinge angle calculation, we should always project onto the X-Z plane
-     * (perpendicular to the hinge axis) to measure the actual hinge movement.
-     * 
-     * The previous orientation-based approach was wrong because it assumed the projection
-     * plane should change based on gravity, but the physical hinge axis never changes.
-     */
+    /* Convert to degrees - this gives us 0-180° range */
+    double base_angle = acos(dot_product) * 180.0 / M_PI;
     
-    double base_proj[3], lid_proj[3];
+    /* Enhanced direction detection with realistic fold-back detection */
+    bool folding_back = false;
     
-    /* Always project onto X-Z plane (remove Y component) since Y is the hinge axis */
-    log_debug("Using X-Z plane projection (removing Y component), base_orientation=%d", base_orientation);
-    base_proj[0] = base_norm[0];
-    base_proj[1] = 0.0;  /* Remove Y component - this is the hinge axis */
-    base_proj[2] = base_norm[2];
-    lid_proj[0] = lid_norm[0];
-    lid_proj[1] = 0.0;   /* Remove Y component - this is the hinge axis */
-    lid_proj[2] = lid_norm[2];
-    
-    /* Normalize the projected vectors */
-    double base_proj_mag = sqrt(base_proj[0]*base_proj[0] + base_proj[1]*base_proj[1] + base_proj[2]*base_proj[2]);
-    double lid_proj_mag = sqrt(lid_proj[0]*lid_proj[0] + lid_proj[1]*lid_proj[1] + lid_proj[2]*lid_proj[2]);
-    
-    log_debug("Projected vectors - Base[%.3f,%.3f,%.3f] mag=%.3f, Lid[%.3f,%.3f,%.3f] mag=%.3f", 
-             base_proj[0], base_proj[1], base_proj[2], base_proj_mag,
-             lid_proj[0], lid_proj[1], lid_proj[2], lid_proj_mag);
-    
-    if (base_proj_mag < 1e-6 || lid_proj_mag < 1e-6) {
-        /* Fallback to simple dot product if projection fails */
-        log_debug("Projection failed, using fallback dot product");
-        double dot_product = base_norm[0]*lid_norm[0] + base_norm[1]*lid_norm[1] + base_norm[2]*lid_norm[2];
-        if (dot_product > 1.0) dot_product = 1.0;
-        if (dot_product < -1.0) dot_product = -1.0;
-        return acos(dot_product) * 180.0 / M_PI;
+    if (last_base_angle >= 0.0) {
+        /* Determine if we're increasing or decreasing */
+        bool currently_increasing = (base_angle > last_base_angle + 2.0);  /* 2° threshold for noise */
+        bool currently_decreasing = (base_angle < last_base_angle - 2.0);
+        
+        /* Update trend if we have a clear direction change */
+        if (currently_increasing && !was_increasing) {
+            was_increasing = true;
+            /* Exit fold-back mode when clearly increasing from small angles toward laptop range */
+            if (base_angle > 50.0 && base_angle < 120.0) {  /* Mid-range indicates real unfolding */
+                definitely_folding_back = false;
+                log_debug("Trend change: now increasing at %.1f° - exiting fold-back mode (unfolding toward laptop)", base_angle);
+            } else {
+                log_debug("Trend change: now increasing at %.1f° - staying in fold-back mode", base_angle);
+            }
+        } else if (currently_decreasing && was_increasing) {
+            /* FIXED: Look for decreasing trend from ANY angle in laptop+ range to detect fold-back
+             * The real device shows base angles around 85-93° even when folding back */
+            if (base_angle >= 80.0) {  /* Much more realistic threshold based on actual logs */
+                was_increasing = false;
+                definitely_folding_back = true;
+                log_debug("Trend change: now decreasing from %.1f° - entering fold-back mode (realistic threshold)", base_angle);
+            }
+        }
+        
+        /* Fold-back exit: sustained increasing trend moving back toward laptop */
+        if (currently_increasing && was_increasing && base_angle >= 70.0 && base_angle <= 110.0 && definitely_folding_back) {
+            definitely_folding_back = false;
+            log_debug("Fold-back exit: sustained increasing trend in laptop range %.1f° - exiting fold-back mode", base_angle);
+        }
+        
+        /* We're in fold-back mode if:
+         * 1. We're definitely folding back (sticky state), OR  
+         * 2. We're decreasing and angle suggests fold-back territory */
+        folding_back = definitely_folding_back || (!was_increasing && base_angle >= 75.0);
+        
+        /* Special handling: if we're decreasing from flat-ish angles, we're folding back */
+        if (!was_increasing && last_base_angle >= 80.0 && base_angle >= 75.0) {
+            folding_back = true;
+            if (!definitely_folding_back) {
+                log_debug("Detected fold-back motion: decreasing from %.1f° to %.1f°", last_base_angle, base_angle);
+            }
+        }
     }
     
-    base_proj[0] /= base_proj_mag;
-    base_proj[1] /= base_proj_mag;
-    base_proj[2] /= base_proj_mag;
-    lid_proj[0] /= lid_proj_mag;
-    lid_proj[1] /= lid_proj_mag;
-    lid_proj[2] /= lid_proj_mag;
-
-    /* Calculate both dot product and cross product for full 0-360° range */
-    double dot_product = base_proj[0]*lid_proj[0] + base_proj[1]*lid_proj[1] + base_proj[2]*lid_proj[2];
-    
-    /* Calculate cross product (we only need the Y component since we're in X-Z plane) */
-    /* Cross product in X-Z plane: (a1, 0, a3) × (b1, 0, b3) = (0, a3*b1 - a1*b3, 0) */
-    double cross_y = base_proj[2]*lid_proj[0] - base_proj[0]*lid_proj[2];
-    
-    /* Use atan2 to get full 0-360° range */
-    double angle_rad = atan2(cross_y, dot_product);
-    double angle_deg = angle_rad * 180.0 / M_PI;
-    
-    /* Ensure angle is in 0-360° range */
-    if (angle_deg < 0) {
-        angle_deg += 360.0;
+    /* Final angle calculation */
+    double final_angle;
+    if (folding_back) {
+        /* Map 0-180° to 180-360° range for folding back positions */
+        final_angle = 360.0 - base_angle;
+        log_debug("Hinge calculation (folding back): base[%d,%d,%d] lid[%d,%d,%d] -> dot=%.3f, base_angle=%.1f°, trend=%s, sticky=%s, final=%.1f°", 
+                 base->x, base->y, base->z, lid->x, lid->y, lid->z, dot_product, base_angle, 
+                 was_increasing ? "increasing" : "decreasing", definitely_folding_back ? "yes" : "no", final_angle);
+    } else {
+        /* Normal opening: use base angle directly */
+        final_angle = base_angle;
+        log_debug("Hinge calculation (normal opening): base[%d,%d,%d] lid[%d,%d,%d] -> dot=%.3f, base_angle=%.1f°, trend=%s, sticky=%s, final=%.1f°", 
+                 base->x, base->y, base->z, lid->x, lid->y, lid->z, dot_product, base_angle,
+                 was_increasing ? "increasing" : "decreasing", definitely_folding_back ? "yes" : "no", final_angle);
     }
     
-    log_debug("Hinge calculation: dot=%.3f, cross_y=%.3f, angle=%.1f°", 
-             dot_product, cross_y, angle_deg);
+    last_base_angle = base_angle;
+    
+    /* The enhanced approach gives us:
+     * - Stable angle calculation independent of device orientation (dot product)
+     * - Full 0-360° range for existing mode boundaries (trend-based direction detection)
+     * - Sticky fold-back state to prevent premature exits from tent/tablet detection
+     * - Special tablet mode handling for angles near 0°/360° */
+    
+    return final_angle;
+}
 
-    return angle_deg;
+/* Validate angle change to filter spurious readings */
+/* Returns true if angle change seems valid, false if too large and should be ignored */
+/* Handles 0-360° wrapping for trend-based direction detection */
+/* SAFETY: Always allow reasonable laptop mode angles to prevent lockout */
+static bool validate_angle_change(double new_angle, double last_angle, const char *context) {
+    static double last_valid_angle = -1.0;
+    
+    /* Initialize on first call */
+    if (last_valid_angle < 0.0) {
+        last_valid_angle = new_angle;
+        log_debug("Angle validation initialized: %.1f° (%s)", new_angle, context);
+        return true;
+    }
+    
+    /* SAFETY OVERRIDE: Always allow laptop mode angles (45-135°) to prevent lockout */
+    if (new_angle >= 45.0 && new_angle <= 135.0) {
+        last_valid_angle = new_angle;
+        log_debug("Angle validation SAFETY OVERRIDE: %.1f° (laptop mode) - allowing to prevent lockout (%s)", 
+                 new_angle, context);
+        return true;
+    }
+    
+    /* Calculate the change from last valid angle */
+    double angle_change = fabs(new_angle - last_valid_angle);
+    
+    /* Handle trend-based 0-360° mapping transitions:
+     * The key insight is that angles 180-360° are mapped from the same 0-180° base range
+     * So a transition from 270° (folding back) to 90° (normal) represents the same base angle
+     * and should be considered a small change, not a large jump */
+    
+    double min_change = angle_change;
+    
+    /* Check for folding-back to normal-opening transitions */
+    if (last_valid_angle > 180.0 && new_angle < 180.0) {
+        /* Transition from folding back (180-360°) to normal opening (0-180°) */
+        /* Map both to base angles and compare */
+        double last_base = 360.0 - last_valid_angle;  /* Convert folding-back to base angle */
+        double new_base = new_angle;                   /* Already a base angle */
+        double base_change = fabs(new_base - last_base);
+        if (base_change < min_change) {
+            min_change = base_change;
+            log_debug("Fold-back to normal transition: %.1f° -> %.1f° (base: %.1f° -> %.1f°, change: %.1f°)", 
+                     last_valid_angle, new_angle, last_base, new_base, base_change);
+        }
+    } else if (last_valid_angle < 180.0 && new_angle > 180.0) {
+        /* Transition from normal opening (0-180°) to folding back (180-360°) */
+        double last_base = last_valid_angle;           /* Already a base angle */
+        double new_base = 360.0 - new_angle;          /* Convert folding-back to base angle */
+        double base_change = fabs(new_base - last_base);
+        if (base_change < min_change) {
+            min_change = base_change;
+            log_debug("Normal to fold-back transition: %.1f° -> %.1f° (base: %.1f° -> %.1f°, change: %.1f°)", 
+                     last_valid_angle, new_angle, last_base, new_base, base_change);
+        }
+    }
+    
+    /* Also check standard wrapping around 0°/360° boundary */
+    if (last_valid_angle > 300.0 && new_angle < 60.0) {
+        /* Transition from high angle to low angle (360° -> 0° wrap) */
+        double wrap_change = (360.0 - last_valid_angle) + new_angle;
+        if (wrap_change < min_change) min_change = wrap_change;
+    } else if (last_valid_angle < 60.0 && new_angle > 300.0) {
+        /* Transition from low angle to high angle (0° -> 360° wrap) */
+        double wrap_change = (360.0 - new_angle) + last_valid_angle;
+        if (wrap_change < min_change) min_change = wrap_change;
+    }
+    
+    /* Check if change is reasonable */
+    if (min_change <= MAX_ANGLE_CHANGE_PER_SAMPLE) {
+        last_valid_angle = new_angle;
+        log_debug("Angle validation passed: %.1f° -> %.1f° (min_change: %.1f°) (%s)", 
+                 last_angle, new_angle, min_change, context);
+        return true;
+    } else {
+        log_debug("Angle validation FAILED: %.1f° -> %.1f° (min_change: %.1f° > max %.1f°) - ignoring (%s)", 
+                 last_valid_angle, new_angle, min_change, MAX_ANGLE_CHANGE_PER_SAMPLE, context);
+        return false;
+    }
 }
 
 /* Get laptop mode based on hinge angle with hysteresis to prevent spurious mode changes */
@@ -792,42 +914,48 @@ static const char* get_laptop_mode(double angle, const char* current_mode) {
         return "laptop";        /* Invalid angle - default to laptop */
     }
     
-    /* Use hysteresis: different thresholds for entering vs staying in a mode
-     * This prevents rapid mode switching due to sensor noise around boundaries */
+    /* Use enhanced hysteresis: different thresholds for entering vs staying in a mode
+     * Tablet mode gets enhanced protection with larger hysteresis */
+    double hysteresis = MODE_HYSTERESIS;  /* Default: 10.0 degrees */
+    if (strcmp(current_mode, "tablet") == 0) {
+        hysteresis = TABLET_MODE_HYSTERESIS;  /* Enhanced: 25.0 degrees */
+    }
     
     if (strcmp(current_mode, "closing") == 0) {
         /* In closing mode: need significant movement to exit */
-        if (angle >= (MODE_CLOSING_MAX + MODE_HYSTERESIS)) {
+        if (angle >= (MODE_CLOSING_MAX + hysteresis)) {
             return "laptop";
         }
         return "closing";
     } else if (strcmp(current_mode, "laptop") == 0) {
         /* In laptop mode: need significant movement to exit */
-        if (angle < (MODE_CLOSING_MAX - MODE_HYSTERESIS)) {
+        if (angle < (MODE_CLOSING_MAX - hysteresis)) {
             return "closing";
-        } else if (angle >= (MODE_LAPTOP_MAX + MODE_HYSTERESIS)) {
+        } else if (angle >= (MODE_LAPTOP_MAX + hysteresis)) {
             return "flat";
         }
         return "laptop";
     } else if (strcmp(current_mode, "flat") == 0) {
         /* In flat mode: need significant movement to exit */
-        if (angle < (MODE_LAPTOP_MAX - MODE_HYSTERESIS)) {
+        if (angle < (MODE_LAPTOP_MAX - hysteresis)) {
             return "laptop";
-        } else if (angle >= (MODE_FLAT_MAX + MODE_HYSTERESIS)) {
+        } else if (angle >= (MODE_FLAT_MAX + hysteresis)) {
             return "tent";
         }
         return "flat";
     } else if (strcmp(current_mode, "tent") == 0) {
         /* In tent mode: need significant movement to exit */
-        if (angle < (MODE_FLAT_MAX - MODE_HYSTERESIS)) {
+        if (angle < (MODE_FLAT_MAX - hysteresis)) {
             return "flat";
-        } else if (angle >= (MODE_TENT_MAX + MODE_HYSTERESIS)) {
+        } else if (angle >= (MODE_TENT_MAX + hysteresis)) {
             return "tablet";
         }
         return "tent";
     } else if (strcmp(current_mode, "tablet") == 0) {
-        /* In tablet mode: need significant movement to exit */
-        if (angle < (MODE_TENT_MAX - MODE_HYSTERESIS)) {
+        /* In tablet mode: need significant movement to exit with ENHANCED protection */
+        if (angle < (MODE_TENT_MAX - hysteresis)) {  /* 25° hysteresis vs 10° default */
+            log_debug("Tablet mode exit: angle %.1f° < threshold %.1f° (enhanced hysteresis %.1f°)", 
+                     angle, MODE_TENT_MAX - hysteresis, hysteresis);
             return "tent";
         }
         return "tablet";
@@ -851,7 +979,34 @@ static const char* get_laptop_mode(double angle, const char* current_mode) {
 /* Only allows transitions between adjacent modes: closing <-> laptop <-> flat <-> tent <-> tablet */
 /* Uses hysteresis to prevent spurious mode changes from sensor noise */
 /* Requires multiple consistent readings before allowing mode changes */
-static const char* get_stable_laptop_mode(double angle) {
+static const char* get_stable_laptop_mode(double angle, int orientation) {
+    /* Check for orientation changes and freeze mode changes during transitions */
+    if (last_detected_orientation != ORIENTATION_UNKNOWN && orientation != last_detected_orientation) {
+        log_debug("Orientation change detected: %d -> %d, freezing mode changes for %d samples", 
+                 last_detected_orientation, orientation, ORIENTATION_FREEZE_DURATION);
+        orientation_freeze_samples = ORIENTATION_FREEZE_DURATION;
+        last_detected_orientation = orientation;
+    } else if (last_detected_orientation == ORIENTATION_UNKNOWN) {
+        last_detected_orientation = orientation;
+    }
+    
+    /* If we're in orientation freeze, maintain current mode */
+    if (orientation_freeze_samples > 0) {
+        orientation_freeze_samples--;
+        log_debug("Mode frozen due to orientation change (remaining: %d samples), maintaining mode", 
+                 orientation_freeze_samples);
+        /* Reset stability tracking during freeze to prevent spurious changes */
+        stability_count = 0;
+        candidate_mode = NULL;
+        return last_stable_mode;
+    }
+    
+    /* Determine required stability samples based on current mode */
+    int required_stability = MODE_STABILITY_SAMPLES;  /* Default: 3 */
+    if (strcmp(last_stable_mode, "tablet") == 0) {
+        required_stability = TABLET_MODE_STABILITY_SAMPLES;  /* Enhanced: 5 */
+    }
+    
     const char* new_mode = get_laptop_mode(angle, last_stable_mode);
     
     /* If mode hasn't changed, update tracking and return */
@@ -896,19 +1051,21 @@ static const char* get_stable_laptop_mode(double angle) {
         /* New candidate mode - start stability tracking */
         candidate_mode = new_mode;
         stability_count = 1;
-        log_debug("New mode candidate: %s (stability 1/%d, angle %.1f°)", 
-                 new_mode, MODE_STABILITY_SAMPLES, angle);
+        log_debug("New mode candidate: %s (stability 1/%d, angle %.1f°, enhanced_tablet=%s)", 
+                 new_mode, required_stability, angle, 
+                 (required_stability == TABLET_MODE_STABILITY_SAMPLES) ? "yes" : "no");
         return last_stable_mode;  /* Stay in current mode until stable */
     } else {
         /* Same candidate mode - increment stability count */
         stability_count++;
-        log_debug("Mode candidate: %s (stability %d/%d, angle %.1f°)", 
-                 new_mode, stability_count, MODE_STABILITY_SAMPLES, angle);
+        log_debug("Mode candidate: %s (stability %d/%d, angle %.1f°, enhanced_tablet=%s)", 
+                 new_mode, stability_count, required_stability, angle,
+                 (required_stability == TABLET_MODE_STABILITY_SAMPLES) ? "yes" : "no");
         
-        if (stability_count >= MODE_STABILITY_SAMPLES) {
+        if (stability_count >= required_stability) {
             /* Candidate is stable - make the transition */
-            log_debug("Mode transition confirmed: %s -> %s (angle %.1f°)", 
-                     last_stable_mode, new_mode, angle);
+            log_debug("Mode transition confirmed: %s -> %s (angle %.1f°, samples=%d)", 
+                     last_stable_mode, new_mode, angle, required_stability);
             last_stable_mode = new_mode;
             last_stable_mode_angle = angle;
             /* Reset stability tracking */
@@ -1069,14 +1226,20 @@ static int run_feeder(void)
         /* Calculate hinge angle if we have valid readings from both sensors */
         if (base_valid && lid_valid) {
             double angle = calculate_hinge_angle(&base_sample, &lid_sample);
-            const char* mode = get_stable_laptop_mode(angle);
             
-            /* Get device orientation with tablet mode reading protection */
-            /* In tablet mode, prevents orientation changes when tilted > 45° for reading stability */
-            const char* orientation = get_orientation_with_tablet_protection(
-                lid_sample.x, lid_sample.y, lid_sample.z, mode);
-            
-            if (angle >= 0) {
+            /* Validate angle change to filter spurious readings */
+            if (angle >= 0 && validate_angle_change(angle, -1.0, "main_loop")) {
+                /* Get device orientation (needed for mode freezing during orientation changes) */
+                int orientation_value = get_device_orientation(lid_sample.x, lid_sample.y, lid_sample.z);
+                
+                /* Get stable mode with enhanced tablet protection and orientation awareness */
+                const char* mode = get_stable_laptop_mode(angle, orientation_value);
+                
+                /* Get device orientation string with tablet mode reading protection */
+                /* In tablet mode, prevents orientation changes when tilted > 45° for reading stability */
+                const char* orientation = get_orientation_with_tablet_protection(
+                    lid_sample.x, lid_sample.y, lid_sample.z, mode);
+                
                 log_info("Hinge angle: %.1f° (%s) - Orientation: %s - Base[%d,%d,%d] Lid[%d,%d,%d]", 
                         angle, mode, orientation,
                         base_sample.x, base_sample.y, base_sample.z,
@@ -1091,6 +1254,8 @@ static int run_feeder(void)
                 if (write_orientation(orientation) < 0) {
                     log_warn("Failed to write orientation '%s' to kernel module", orientation);
                 }
+            } else if (angle >= 0) {
+                log_debug("Skipping mode update due to spurious angle reading: %.1f°", angle);
             }
             
             /* Reset valid flags - we'll calculate again when new data arrives */
