@@ -1059,18 +1059,18 @@ static int setup_signals(void)
 
 int main(int argc, char **argv)
 {
+    /* Parse command line arguments first to handle --help and --version cleanly */
+    if (parse_args(argc, argv) < 0) {
+        return 1;
+    }
+    
     /* Register cleanup function to run on normal exit */
     if (atexit(cleanup_and_exit) != 0) {
         log_warn("Failed to register cleanup function");
     }
     
-    /* Load configuration file first */
-    load_config_file("/etc/default/cmxd.conf");
-    
-    /* Parse command line arguments (overrides config file) */
-    if (parse_args(argc, argv) < 0) {
-        return 1;
-    }
+    /* Load configuration file (may override some defaults) */
+    load_config_file("/etc/default/cmxd");
     
     /* Wait for kernel module sysfs interface to be available */
     char sysfs_path[PATH_MAX];
