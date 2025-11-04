@@ -1,1 +1,41 @@
+# Build products
 /cmxd
+*.o
+*.a
+*.so
+*.so.*
+
+# Debug files
+*.dSYM/
+*.su
+*.idb
+*.pdb
+
+# Static analysis files
+*.sarif
+
+# Temporary and backup files
+*~
+*.swp
+*.swo
+.#*
+\#*#
+*.tmp
+*.bak
+*.orig
+
+# Core dumps
+core
+core.*
+
+# Editor files
+.vscode/
+.idea/
+*.sublime-*
+.DS_Store
+Thumbs.db
+
+# Test and temporary directories
+/test-install/
+/build/
+/dist/
