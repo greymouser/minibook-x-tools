@@ -28,6 +28,9 @@
 #include <stdbool.h>
 #include <sys/types.h>
 
+#include "cmxd-calculations.h"
+#include "cmxd-orientation.h"
+
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif
@@ -132,6 +135,17 @@ static void log_msg(const char *level, const char *fmt, ...)
 #define log_warn(fmt, ...)  log_msg("WARN", fmt, ##__VA_ARGS__)
 #define log_info(fmt, ...)  log_msg("INFO", fmt, ##__VA_ARGS__)
 #define log_debug(fmt, ...) log_msg("DEBUG", fmt, ##__VA_ARGS__)
+
+/* Wrapper function for orientation module logging */
+static void orientation_log_debug(const char *fmt, ...)
+{
+    va_list args;
+    va_start(args, fmt);
+    char buffer[512];
+    vsnprintf(buffer, sizeof(buffer), fmt, args);
+    va_end(args);
+    log_debug("%s", buffer);
+}
 
 /* Safe file operations */
 static FILE *safe_fopen(const char *path, const char *mode)
@@ -718,17 +732,20 @@ static int run_main_loop(void)
         
         /* Process sensor data if we have valid readings from both sensors */
         if (base_valid && lid_valid) {
-            /* TODO: Add improved mode detection and orientation processing here */
-            log_info("Processing sensor data - Base[%d,%d,%d] Lid[%d,%d,%d]", 
-                    base_sample.x, base_sample.y, base_sample.z,
-                    lid_sample.x, lid_sample.y, lid_sample.z);
+            /* Detect orientation using lid accelerometer */
+            const char* orientation = cmxd_get_orientation_simple(lid_sample.x, lid_sample.y, lid_sample.z);
             
-            /* For now, just write default laptop mode and landscape orientation */
+            log_info("Processing sensor data - Base[%d,%d,%d] Lid[%d,%d,%d] -> Orientation: %s", 
+                    base_sample.x, base_sample.y, base_sample.z,
+                    lid_sample.x, lid_sample.y, lid_sample.z, orientation);
+            
+            /* For now, just write default laptop mode */
             if (write_mode("laptop") < 0) {
                 log_warn("Failed to write mode to kernel module");
             }
             
-            if (write_orientation("landscape") < 0) {
+            /* Write detected orientation to kernel module */
+            if (write_orientation(orientation) < 0) {
                 log_warn("Failed to write orientation to kernel module");
             }
             
@@ -1118,6 +1135,12 @@ int main(int argc, char **argv)
         log_error("Path validation failed");
         return 1;
     }
+    
+    /* Initialize orientation detection module */
+    cmxd_orientation_init();
+    cmxd_orientation_set_log_debug(orientation_log_debug);
+    cmxd_orientation_set_verbose(cfg.verbose);
+    log_info("Orientation detection module initialized");
     
     /* Run main loop */
     int ret = run_main_loop();

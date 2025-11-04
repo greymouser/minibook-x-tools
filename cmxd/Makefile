@@ -23,7 +23,7 @@ SYSTEMDDIR := $(PREFIX)/lib/systemd/system
 MANDIR := $(PREFIX)/share/man
 
 # Source files
-SOURCES := $(PROGRAM_NAME).c
+SOURCES := $(PROGRAM_NAME).c cmxd-calculations.c cmxd-orientation.c
 OBJECTS := $(SOURCES:.c=.o)
 TARGET := $(PROGRAM_NAME)
 MANPAGES := $(PROGRAM_NAME).8
