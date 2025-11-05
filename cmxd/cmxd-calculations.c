@@ -157,3 +157,58 @@ double cmxd_calculate_hinge_angle(const struct cmxd_accel_sample *base, const st
     
     return angle;
 }
+
+/* Calculate full 0-360° hinge angle from base and lid accelerometer readings */
+/* Uses cross product to determine direction and provide full range */
+double cmxd_calculate_hinge_angle_360(const struct cmxd_accel_sample *base, const struct cmxd_accel_sample *lid)
+{
+    /* Convert raw accelerometer values to normalized vectors */
+    double base_magnitude = cmxd_calculate_magnitude((double)base->x, (double)base->y, (double)base->z);
+    double lid_magnitude = cmxd_calculate_magnitude((double)lid->x, (double)lid->y, (double)lid->z);
+    
+    if (base_magnitude < 1.0 || lid_magnitude < 1.0) {
+        debug_log("Invalid accelerometer readings: base_mag=%.3f, lid_mag=%.3f", base_magnitude, lid_magnitude);
+        return -1.0; /* Invalid reading */
+    }
+    
+    /* Normalize the vectors */
+    double base_norm[3] = {
+        base->x / base_magnitude,
+        base->y / base_magnitude, 
+        base->z / base_magnitude
+    };
+    
+    double lid_norm[3] = {
+        lid->x / lid_magnitude,
+        lid->y / lid_magnitude,
+        lid->z / lid_magnitude
+    };
+    
+    /* Calculate the dot product between normalized vectors */
+    double dot_product = cmxd_calculate_dot_product(base_norm[0], base_norm[1], base_norm[2],
+                                                   lid_norm[0], lid_norm[1], lid_norm[2]);
+    
+    /* Clamp to valid range to avoid numerical errors in acos() */
+    dot_product = cmxd_clamp(dot_product, -1.0, 1.0);
+    
+    /* Calculate base angle from dot product (0-180°) */
+    double angle = acos(dot_product) * 180.0 / M_PI;
+    
+    /* Calculate cross product to determine which side of 180° we're on */
+    /* Cross product gives us the direction of rotation */
+    double cross_x = base_norm[1] * lid_norm[2] - base_norm[2] * lid_norm[1];
+    double cross_y = base_norm[2] * lid_norm[0] - base_norm[0] * lid_norm[2];
+    double cross_z = base_norm[0] * lid_norm[1] - base_norm[1] * lid_norm[0];
+    
+    /* Use the Y component of cross product to determine fold direction */
+    /* This assumes the hinge rotates around the Y axis */
+    if (cross_y < 0) {
+        /* Fold-back direction: 180° + angle gives us 180-360° range */
+        angle = 360.0 - angle;
+    }
+    
+    debug_log("Hinge calculation (360°): base[%d,%d,%d] lid[%d,%d,%d] -> dot=%.3f, cross_y=%.3f, angle=%.1f°", 
+             base->x, base->y, base->z, lid->x, lid->y, lid->z, dot_product, cross_y, angle);
+    
+    return angle;
+}

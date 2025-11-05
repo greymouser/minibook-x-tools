@@ -760,8 +760,8 @@ static int run_main_loop(void)
                 .timestamp = lid_sample.timestamp
             };
             
-            /* Calculate hinge angle for mode detection */
-            double hinge_angle = cmxd_calculate_hinge_angle(&base_calc_sample, &lid_calc_sample);
+            /* Calculate hinge angle for mode detection using 0-360° system */
+            double hinge_angle = cmxd_calculate_hinge_angle_360(&base_calc_sample, &lid_calc_sample);
             
             /* Calculate tilt angle for orientation display */
             double tilt_angle = cmxd_calculate_tilt_angle(lid_sample.x, lid_sample.y, lid_sample.z);

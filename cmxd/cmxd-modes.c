@@ -13,20 +13,18 @@
 #include <string.h>
 #include <stdarg.h>
 
-/* Mode boundary angles - hybrid approach with state tracking for tent/tablet */
+/* Mode boundary angles - 0-360° system */
 const double CMXD_MODE_CLOSING_MAX = 45.0;      /* 0°-45°: Closing mode */
 const double CMXD_MODE_LAPTOP_MAX = 145.0;      /* 45°-145°: Laptop mode */
-const double CMXD_MODE_FLAT_MAX = 180.0;        /* 145°-180°: Flat mode */
-const double CMXD_MODE_TENT_MAX = 145.0;        /* State-tracked: 145°-120° on return journey */
-const double CMXD_MODE_TABLET_MAX = 120.0;      /* State-tracked: 120°-90° on return journey */
+const double CMXD_MODE_FLAT_MAX = 225.0;        /* 145°-225°: Flat mode */
+const double CMXD_MODE_TENT_MAX = 315.0;        /* 225°-315°: Tent mode */
+const double CMXD_MODE_TABLET_MAX = 360.0;      /* 315°-360° (& 0°-45°): Tablet mode */
 
 /* Hysteresis amount to prevent spurious mode switching */
-const double CMXD_MODE_HYSTERESIS = 15.0;          /* Reduced: 15° of hysteresis around boundaries */
-const double CMXD_TABLET_MODE_HYSTERESIS = 25.0;   /* Reduced: 25° hysteresis for tablet mode stability */
+const double CMXD_MODE_HYSTERESIS = 15.0;          /* Standard: 15° of hysteresis around boundaries */
 
 /* Spurious data filtering - require consistency before mode changes */
-const int CMXD_MODE_STABILITY_SAMPLES = 5;         /* Increased: 5 consistent readings required */
-const int CMXD_TABLET_MODE_STABILITY_SAMPLES = 8;  /* Enhanced: 8 stability requirement for tablet mode exits */
+const int CMXD_MODE_STABILITY_SAMPLES = 5;         /* Standard: 5 consistent readings required */
 
 /* Orientation change detection to prevent mode changes during device rotation */
 const int CMXD_ORIENTATION_FREEZE_DURATION = 8;    /* Number of samples to freeze after orientation change */
@@ -38,11 +36,6 @@ static int orientation_freeze_samples = 0;
 static int stability_count = 0;
 static const char* candidate_mode = NULL;
 static bool verbose_logging = false;
-
-/* State tracking for tent/tablet detection */
-static bool has_reached_flat = false;           /* Track if we've been in flat mode */
-static int flat_exit_direction = 0;            /* 1 = exited flat toward fold-back, -1 = toward laptop, 0 = unknown */
-static double last_angle = 0.0;                /* Track angle changes for direction detection */
 
 /* Logging function (will be set by main) */
 static void (*log_debug_func)(const char *fmt, ...) = NULL;
@@ -83,108 +76,100 @@ void cmxd_modes_reset(void)
     cmxd_modes_init();
 }
 
-/* Get device mode based on hinge angle with hybrid state tracking */
+/* Get device mode based on hinge angle with 0-360° system */
 const char* cmxd_get_device_mode(double angle, const char* current_mode)
 {
     if (angle < 0) {
         return CMXD_MODE_LAPTOP;  /* Invalid angle - default to laptop */
     }
     
-    /* Track angle changes for direction detection */
-    if (last_angle > 0) {
-        if (angle > last_angle + 2.0) {
-            /* Moving toward higher angles (toward flat/fold-back) */
-            if (angle > CMXD_MODE_FLAT_MAX - 10.0) {
-                flat_exit_direction = 1;  /* Exiting flat toward fold-back */
-                debug_log("Detected fold-back direction: angle %.1f° > %.1f°", angle, CMXD_MODE_FLAT_MAX - 10.0);
-            }
-        } else if (angle < last_angle - 2.0) {
-            /* Moving toward lower angles (toward laptop/closing) */
-            if (has_reached_flat && angle < CMXD_MODE_FLAT_MAX - 20.0) {
-                flat_exit_direction = -1; /* Exiting flat toward laptop */
-                debug_log("Detected laptop direction: angle %.1f° < %.1f°", angle, CMXD_MODE_FLAT_MAX - 20.0);
-            }
-        }
-    }
-    last_angle = angle;
-    
-    /* Track if we've reached flat mode */
-    if (angle >= CMXD_MODE_FLAT_MAX - 5.0) {
-        if (!has_reached_flat) {
-            debug_log("Reached flat mode: angle %.1f°", angle);
-        }
-        has_reached_flat = true;
-    }
-    
-    /* Reset state when we return to laptop mode normally */
-    if (angle < CMXD_MODE_LAPTOP_MAX - 20.0 && flat_exit_direction != 1) {
-        if (has_reached_flat) {
-            debug_log("Reset state: returned to laptop normally at %.1f°", angle);
-        }
-        has_reached_flat = false;
-        flat_exit_direction = 0;
-    }
-    
-    /* Use enhanced hysteresis */
-    double hysteresis = CMXD_MODE_HYSTERESIS;  /* Default: 15.0 degrees */
-    if (current_mode && (strcmp(current_mode, CMXD_MODE_TENT) == 0 || strcmp(current_mode, CMXD_MODE_TABLET) == 0)) {
-        hysteresis = CMXD_TABLET_MODE_HYSTERESIS;  /* Enhanced: 25.0 degrees */
-    } else if (current_mode && strcmp(current_mode, CMXD_MODE_LAPTOP) == 0) {
-        hysteresis = CMXD_MODE_HYSTERESIS;  /* Keep standard: 15.0 degrees for laptop mode */
-    }
-    
-    /* Tent/tablet mode detection: if we've been to flat and are coming back with fold-back direction */
-    if (has_reached_flat && flat_exit_direction == 1) {
-        debug_log("Fold-back mode detection: angle %.1f°, has_flat=%d, direction=%d", angle, has_reached_flat, flat_exit_direction);
-        if (angle <= CMXD_MODE_TABLET_MAX) {
-            return CMXD_MODE_TABLET;  /* Fully folded back */
-        } else if (angle <= CMXD_MODE_TENT_MAX) {
-            return CMXD_MODE_TENT;    /* Partially folded back */
-        } else {
-            /* Still in higher angle range but coming from fold-back - stay in tent mode */
-            return CMXD_MODE_TENT;
+    /* Prevent spurious wrap-around when in tablet mode */
+    if (current_mode && strcmp(current_mode, CMXD_MODE_TABLET) == 0) {
+        if (angle < 90.0) {  /* If angle appears to be near 0° but we're in tablet mode */
+            debug_log("Tablet mode wrap-around prevention: %.1f° -> treating as ~360°", angle);
+            angle = 360.0 - angle;  /* Treat as being near 360° instead */
+            debug_log("Adjusted angle: %.1f°", angle);
         }
     }
     
-    /* Standard mode detection with hysteresis */
+    /* Use hysteresis to prevent spurious mode switching */
+    double hysteresis = CMXD_MODE_HYSTERESIS;  /* 15.0 degrees */
+    
+    debug_log("Mode detection: angle=%.1f°, current_mode=%s", angle, current_mode ? current_mode : "NULL");
+    
+    /* 0-360° mode detection with hysteresis */
     if (current_mode && strcmp(current_mode, CMXD_MODE_CLOSING) == 0) {
         if (angle >= (CMXD_MODE_CLOSING_MAX + hysteresis)) {
+            debug_log("Closing->Laptop transition: %.1f° >= %.1f°", angle, CMXD_MODE_CLOSING_MAX + hysteresis);
             return CMXD_MODE_LAPTOP;
         }
+        debug_log("Staying in closing mode");
         return CMXD_MODE_CLOSING;
     } else if (current_mode && strcmp(current_mode, CMXD_MODE_LAPTOP) == 0) {
-        if (angle < (CMXD_MODE_CLOSING_MAX - hysteresis)) {
+        if (angle < CMXD_MODE_CLOSING_MAX) {  /* Always return to closing for angles < 45° */
+            debug_log("Laptop->Closing transition: %.1f° < %.1f°", angle, CMXD_MODE_CLOSING_MAX);
             return CMXD_MODE_CLOSING;
         } else if (angle >= (CMXD_MODE_LAPTOP_MAX + hysteresis)) {
+            debug_log("Laptop->Flat transition: %.1f° >= %.1f°", angle, CMXD_MODE_LAPTOP_MAX + hysteresis);
             return CMXD_MODE_FLAT;
         }
+        debug_log("Staying in laptop mode");
         return CMXD_MODE_LAPTOP;
     } else if (current_mode && strcmp(current_mode, CMXD_MODE_FLAT) == 0) {
-        if (angle < (CMXD_MODE_LAPTOP_MAX - hysteresis)) {
+        if (angle < CMXD_MODE_CLOSING_MAX) {  /* Always return to closing for angles < 45° */
+            debug_log("Flat->Closing transition: %.1f° < %.1f°", angle, CMXD_MODE_CLOSING_MAX);
+            return CMXD_MODE_CLOSING;
+        } else if (angle < (CMXD_MODE_LAPTOP_MAX - hysteresis)) {
+            debug_log("Flat->Laptop transition: %.1f° < %.1f°", angle, CMXD_MODE_LAPTOP_MAX - hysteresis);
             return CMXD_MODE_LAPTOP;
-        }
-        return CMXD_MODE_FLAT;
-    } else if (current_mode && strcmp(current_mode, CMXD_MODE_TENT) == 0) {
-        if (angle >= (CMXD_MODE_TENT_MAX + hysteresis)) {
-            return CMXD_MODE_FLAT;  /* Return to flat if angle increases */
-        } else if (angle <= (CMXD_MODE_TABLET_MAX - hysteresis)) {
-            return CMXD_MODE_TABLET;
-        }
-        return CMXD_MODE_TENT;
-    } else if (current_mode && strcmp(current_mode, CMXD_MODE_TABLET) == 0) {
-        if (angle >= (CMXD_MODE_TABLET_MAX + hysteresis)) {
+        } else if (angle >= (CMXD_MODE_FLAT_MAX + hysteresis)) {
+            debug_log("Flat->Tent transition: %.1f° >= %.1f°", angle, CMXD_MODE_FLAT_MAX + hysteresis);
             return CMXD_MODE_TENT;
         }
+        debug_log("Staying in flat mode");
+        return CMXD_MODE_FLAT;
+    } else if (current_mode && strcmp(current_mode, CMXD_MODE_TENT) == 0) {
+        if (angle < CMXD_MODE_CLOSING_MAX) {  /* Always return to closing for angles < 45° */
+            debug_log("Tent->Closing transition: %.1f° < %.1f°", angle, CMXD_MODE_CLOSING_MAX);
+            return CMXD_MODE_CLOSING;
+        } else if (angle < (CMXD_MODE_FLAT_MAX - hysteresis)) {
+            debug_log("Tent->Flat transition: %.1f° < %.1f°", angle, CMXD_MODE_FLAT_MAX - hysteresis);
+            return CMXD_MODE_FLAT;
+        } else if (angle >= (CMXD_MODE_TENT_MAX + hysteresis)) {
+            debug_log("Tent->Tablet transition: %.1f° >= %.1f°", angle, CMXD_MODE_TENT_MAX + hysteresis);
+            return CMXD_MODE_TABLET;
+        }
+        debug_log("Staying in tent mode");
+        return CMXD_MODE_TENT;
+    } else if (current_mode && strcmp(current_mode, CMXD_MODE_TABLET) == 0) {
+        if (angle < (CMXD_MODE_TENT_MAX - hysteresis)) {
+            debug_log("Tablet->Tent transition: %.1f° < %.1f°", angle, CMXD_MODE_TENT_MAX - hysteresis);
+            return CMXD_MODE_TENT;
+        } else if (angle < (CMXD_MODE_CLOSING_MAX - hysteresis) && angle < 180.0) {
+            debug_log("Tablet->Closing transition (wrap): %.1f° < %.1f°", angle, CMXD_MODE_CLOSING_MAX - hysteresis);
+            return CMXD_MODE_CLOSING;
+        }
+        debug_log("Staying in tablet mode");
         return CMXD_MODE_TABLET;
     }
     
-    /* Fallback to standard logic */
+    /* Fallback logic for initial mode detection */
+    debug_log("Using fallback logic for angle %.1f°", angle);
     if (angle < CMXD_MODE_CLOSING_MAX) {
-        return CMXD_MODE_CLOSING;       
+        debug_log("Fallback: Closing mode (%.1f° < %.1f°)", angle, CMXD_MODE_CLOSING_MAX);
+        return CMXD_MODE_CLOSING;       /* 0°-45° */
     } else if (angle < CMXD_MODE_LAPTOP_MAX) {
-        return CMXD_MODE_LAPTOP;        
+        debug_log("Fallback: Laptop mode (%.1f° < %.1f°)", angle, CMXD_MODE_LAPTOP_MAX);
+        return CMXD_MODE_LAPTOP;        /* 45°-145° */
+    } else if (angle < CMXD_MODE_FLAT_MAX) {
+        debug_log("Fallback: Flat mode (%.1f° < %.1f°)", angle, CMXD_MODE_FLAT_MAX);
+        return CMXD_MODE_FLAT;          /* 145°-225° */
+    } else if (angle < CMXD_MODE_TENT_MAX) {
+        debug_log("Fallback: Tent mode (%.1f° < %.1f°)", angle, CMXD_MODE_TENT_MAX);
+        return CMXD_MODE_TENT;          /* 225°-315° */
     } else {
-        return CMXD_MODE_FLAT;          
+        debug_log("Fallback: Tablet mode (%.1f° >= %.1f°)", angle, CMXD_MODE_TENT_MAX);
+        return CMXD_MODE_TABLET;        /* 315°-360° */
     }
 }
 
@@ -212,11 +197,8 @@ const char* cmxd_get_stable_device_mode(double angle, int orientation)
         return last_stable_mode;
     }
     
-    /* Determine required stability samples based on current mode */
-    int required_stability = CMXD_MODE_STABILITY_SAMPLES;  /* Default: 5 */
-    if (strcmp(last_stable_mode, CMXD_MODE_TABLET) == 0 || strcmp(last_stable_mode, CMXD_MODE_TENT) == 0 || strcmp(last_stable_mode, CMXD_MODE_FLAT) == 0) {
-        required_stability = CMXD_TABLET_MODE_STABILITY_SAMPLES;  /* Enhanced: 8 */
-    }
+    /* Determine required stability samples - standard for all modes */
+    int required_stability = CMXD_MODE_STABILITY_SAMPLES;  /* 5 samples for all modes */
     
     const char* new_mode = cmxd_get_device_mode(angle, last_stable_mode);
     
@@ -228,19 +210,19 @@ const char* cmxd_get_stable_device_mode(double angle, int orientation)
         return new_mode;
     }
     
-    /* Check if this is a valid transition - hybrid 5-mode system */
+    /* Check if this is a valid transition - 0-360° system */
     bool valid_transition = false;
     
     if (strcmp(last_stable_mode, CMXD_MODE_CLOSING) == 0) {
-        valid_transition = (strcmp(new_mode, CMXD_MODE_LAPTOP) == 0);
+        valid_transition = (strcmp(new_mode, CMXD_MODE_LAPTOP) == 0);  /* Only laptop mode */
     } else if (strcmp(last_stable_mode, CMXD_MODE_LAPTOP) == 0) {
-        valid_transition = (strcmp(new_mode, CMXD_MODE_CLOSING) == 0 || strcmp(new_mode, CMXD_MODE_FLAT) == 0 || strcmp(new_mode, CMXD_MODE_TENT) == 0);
+        valid_transition = (strcmp(new_mode, CMXD_MODE_CLOSING) == 0 || strcmp(new_mode, CMXD_MODE_FLAT) == 0);
     } else if (strcmp(last_stable_mode, CMXD_MODE_FLAT) == 0) {
         valid_transition = (strcmp(new_mode, CMXD_MODE_LAPTOP) == 0 || strcmp(new_mode, CMXD_MODE_TENT) == 0);
     } else if (strcmp(last_stable_mode, CMXD_MODE_TENT) == 0) {
-        valid_transition = (strcmp(new_mode, CMXD_MODE_FLAT) == 0 || strcmp(new_mode, CMXD_MODE_TABLET) == 0 || strcmp(new_mode, CMXD_MODE_LAPTOP) == 0);
+        valid_transition = (strcmp(new_mode, CMXD_MODE_FLAT) == 0 || strcmp(new_mode, CMXD_MODE_TABLET) == 0);
     } else if (strcmp(last_stable_mode, CMXD_MODE_TABLET) == 0) {
-        valid_transition = (strcmp(new_mode, CMXD_MODE_TENT) == 0);
+        valid_transition = (strcmp(new_mode, CMXD_MODE_TENT) == 0);  /* Only tent mode */
     }
     
     if (!valid_transition) {
