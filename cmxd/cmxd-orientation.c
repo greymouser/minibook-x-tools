@@ -25,6 +25,15 @@ static const char* stable_orientation = NULL;
 static int stable_count = 0;
 static const int STABILITY_THRESHOLD = 10;  /* Need 10 consistent samples */
 
+/* Tilt angle protection state */
+static bool tilt_lock_active = false;
+static int tilt_lock_count = 0;
+static int stability_count = 0;  /* Count stable readings for unlock */
+static double last_tilt_angle = 0.0;  /* Track tilt angle changes */
+static const int TILT_LOCK_THRESHOLD = 3;   /* Need 3 consistent samples for tilt lock */
+static const int STABILITY_UNLOCK_THRESHOLD = 10; /* Need 10 stable readings to unlock */
+static const double TILT_CHANGE_THRESHOLD = 15.0; /* Lock if tilt changes > 15° rapidly */
+
 /* Logging function (will be set by main) */
 static void (*log_debug_func)(const char *fmt, ...) = NULL;
 
@@ -54,6 +63,9 @@ void cmxd_orientation_init(void)
     last_known_orientation = CMXD_ORIENTATION_LANDSCAPE;
     stable_orientation = NULL;
     stable_count = 0;
+    tilt_lock_active = false;
+    tilt_lock_count = 0;
+    verbose_logging = true;  /* Enable verbose logging for tilt protection */
 }
 
 /* Reset orientation detection state */
@@ -113,14 +125,62 @@ const char* cmxd_get_orientation_simple(double x, double y, double z)
 
 /* Get orientation with tablet mode reading protection */
 /* Prevents orientation changes FROM portrait in tablet mode when tilted > 45° for reading stability */
+/* Also implements general tilt protection to prevent orientation bouncing during device transitions */
 const char* cmxd_get_orientation_with_tablet_protection(double x, double y, double z, const char* current_mode)
 {
     /* Calculate current orientation first */
     int orientation = cmxd_get_device_orientation(x, y, z);
     const char* orientation_name = cmxd_get_platform_orientation(orientation);
     
-    /* Calculate tilt angle for tablet mode protection */
+    /* Calculate tilt angle for both tablet mode and general tilt protection */
     double tilt_angle = cmxd_calculate_tilt_angle(x, y, z);
+    
+    /* Stability-based tilt protection: Lock during rapid changes, unlock when stable */
+    if (tilt_lock_active) {
+        /* Already locked - check for stability-based unlock */
+        double tilt_change = (last_tilt_angle != 0.0) ? fabs(tilt_angle - last_tilt_angle) : 0.0;
+        
+        if (tilt_change < 2.0) {  /* Stable reading (< 2° change) */
+            stability_count++;
+            if (stability_count >= STABILITY_UNLOCK_THRESHOLD) {
+                tilt_lock_active = false;
+                stability_count = 0;
+                tilt_lock_count = 0;
+                debug_log("Device stable for %d readings (tilt %.1f°), unlocking orientation changes", 
+                         STABILITY_UNLOCK_THRESHOLD, tilt_angle);
+            }
+        } else {
+            /* Not stable - reset stability counter */
+            stability_count = 0;
+        }
+    } else {
+        /* Not locked - check for rapid tilt changes that should trigger lock */
+        double tilt_change = (last_tilt_angle != 0.0) ? fabs(tilt_angle - last_tilt_angle) : 0.0;
+        
+        if (tilt_change > TILT_CHANGE_THRESHOLD) {
+            tilt_lock_count++;
+            if (tilt_lock_count >= TILT_LOCK_THRESHOLD) {
+                tilt_lock_active = true;
+                tilt_lock_count = 0;
+                stability_count = 0;
+                debug_log("Rapid tilt change detected (%.1f° change), locking orientation changes", tilt_change);
+            }
+        } else {
+            /* Stable movement - reset lock counter */
+            if (tilt_lock_count > 0) {
+                tilt_lock_count--;
+            }
+        }
+    }
+    
+    /* Remember this tilt angle for next comparison */
+    last_tilt_angle = tilt_angle;
+    
+    /* If general tilt lock is active, return the last known stable orientation */
+    if (tilt_lock_active && last_known_orientation != NULL) {
+        debug_log("General tilt lock active: maintaining %s (tilt %.1f°)", last_known_orientation, tilt_angle);
+        return last_known_orientation;
+    }
     
     /* Enhanced tablet reading protection: Only protect against orientation changes during 
        actual reading scenarios with stability (not during active rotation) */
@@ -133,7 +193,7 @@ const char* cmxd_get_orientation_with_tablet_protection(double x, double y, doub
         stable_count++;
     }
     
-    /* Only apply protection if:
+    /* Only apply tablet protection if:
      * 1. In tablet mode
      * 2. High tilt angle (reading position)  
      * 3. Currently stable in portrait (not actively rotating)
@@ -158,6 +218,39 @@ const char* cmxd_get_orientation_with_tablet_protection(double x, double y, doub
     
     debug_log("Normal orientation: %s (tilt %.1f°, mode %s, stable %d)", 
              orientation_name, tilt_angle, current_mode ? current_mode : "unknown", stable_count);
+    return orientation_name;
+}
+
+/* Get orientation with dual-sensor switching (enhanced for tablet mode) */
+/* Uses actual device mode to switch between lid sensor and base sensor calculations */
+const char* cmxd_get_orientation_with_sensor_switching(double lid_x, double lid_y, double lid_z,
+                                                      double base_x, double base_y, double base_z,
+                                                      const char* current_mode)
+{
+    /* Calculate tilt angle using lid sensor only */
+    double tilt_angle = cmxd_calculate_tilt_angle(lid_x, lid_y, lid_z);
+    
+    const char* orientation_name;
+    
+    /* Only use tablet-specific orientation method in actual tablet mode */
+    if (current_mode && (strcmp(current_mode, "tablet") == 0 || strcmp(current_mode, "tent") == 0)) {
+        /* Tablet/Tent mode: Use base sensor direct orientation */
+        debug_log("Tablet/tent mode (%s, tilt %.1f°): using base sensor direct orientation", 
+                 current_mode, tilt_angle);
+        
+        /* Get base sensor orientation directly */
+        int base_orientation = cmxd_get_device_orientation(base_x, base_y, base_z);
+        orientation_name = cmxd_get_platform_orientation(base_orientation);
+        
+        debug_log("Tablet base sensor orientation: %s (base X=%.1f, Y=%.1f, Z=%.1f)", 
+                 orientation_name, base_x, base_y, base_z);
+    } else {
+        /* Non-tablet mode: Use simple lid-based orientation */
+        debug_log("Non-tablet mode (%s, tilt %.1f°): using simple lid sensor orientation", 
+                 current_mode ? current_mode : "unknown", tilt_angle);
+        orientation_name = cmxd_get_orientation_simple(lid_x, lid_y, lid_z);
+    }
+    
     return orientation_name;
 }
 

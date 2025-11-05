@@ -30,6 +30,7 @@
 
 #include "cmxd-calculations.h"
 #include "cmxd-orientation.h"
+#include "cmxd-modes.h"
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -498,7 +499,19 @@ static int setup_iio_buffer(struct iio_buffer *buf, const char *device_name) {
     snprintf(path, sizeof(path), "/dev/%s", device_name);
     buf->buffer_fd = open(path, O_RDONLY | O_NONBLOCK);
     if (buf->buffer_fd < 0) {
-        log_error("Failed to open buffer for %s: %s", device_name, strerror(errno));
+        if (errno == ENOENT) {
+            log_error("Device file %s does not exist", path);
+            log_error("The chuwi-minibook-x kernel module may not be loaded or compiled into the kernel");
+            log_error("Check if the module provides IIO devices:");
+            log_error("  ls -la /sys/bus/iio/devices/");
+            log_error("  ls -la /dev/iio:device*");
+            log_error("If no devices exist, try loading the module: sudo modprobe chuwi-minibook-x");
+        } else if (errno == EACCES) {
+            log_error("Permission denied accessing %s", path);
+            log_error("Try running as root or check device permissions");
+        } else {
+            log_error("Failed to open buffer for %s: %s", device_name, strerror(errno));
+        }
         return -1;
     }
     
@@ -732,15 +745,46 @@ static int run_main_loop(void)
         
         /* Process sensor data if we have valid readings from both sensors */
         if (base_valid && lid_valid) {
-            /* Detect orientation using lid accelerometer */
-            const char* orientation = cmxd_get_orientation_simple(lid_sample.x, lid_sample.y, lid_sample.z);
+            /* Convert to calculation structure format */
+            struct cmxd_accel_sample base_calc_sample = {
+                .x = base_sample.x,
+                .y = base_sample.y,
+                .z = base_sample.z,
+                .timestamp = base_sample.timestamp
+            };
             
-            log_info("Processing sensor data - Base[%d,%d,%d] Lid[%d,%d,%d] -> Orientation: %s", 
+            struct cmxd_accel_sample lid_calc_sample = {
+                .x = lid_sample.x,
+                .y = lid_sample.y,
+                .z = lid_sample.z,
+                .timestamp = lid_sample.timestamp
+            };
+            
+            /* Calculate hinge angle for mode detection */
+            double hinge_angle = cmxd_calculate_hinge_angle(&base_calc_sample, &lid_calc_sample);
+            
+            /* Calculate tilt angle for orientation display */
+            double tilt_angle = cmxd_calculate_tilt_angle(lid_sample.x, lid_sample.y, lid_sample.z);
+            
+            /* Detect device mode using stable mode detection */
+            const char* device_mode = "laptop";  /* Default fallback */
+            if (hinge_angle >= 0) {
+                /* Get orientation code for mode detection */
+                int orientation_code = cmxd_get_device_orientation(lid_sample.x, lid_sample.y, lid_sample.z);
+                device_mode = cmxd_get_stable_device_mode(hinge_angle, orientation_code);
+            }
+            
+            /* Detect orientation using dual-sensor switching based on actual device mode */
+            const char* orientation = cmxd_get_orientation_with_sensor_switching(
+                lid_sample.x, lid_sample.y, lid_sample.z,
+                base_sample.x, base_sample.y, base_sample.z, device_mode);
+            
+            log_info("Processing sensor data - Base[%d,%d,%d] Lid[%d,%d,%d] Hinge=%.1f° Tilt=%.1f° -> Mode: %s, Orientation: %s", 
                     base_sample.x, base_sample.y, base_sample.z,
-                    lid_sample.x, lid_sample.y, lid_sample.z, orientation);
+                    lid_sample.x, lid_sample.y, lid_sample.z, hinge_angle, tilt_angle, device_mode, orientation);
             
-            /* For now, just write default laptop mode */
-            if (write_mode("laptop") < 0) {
+            /* Write detected mode to kernel module */
+            if (write_mode(device_mode) < 0) {
                 log_warn("Failed to write mode to kernel module");
             }
             
@@ -1089,14 +1133,25 @@ int main(int argc, char **argv)
     /* Load configuration file (may override some defaults) */
     load_config_file("/etc/default/cmxd");
     
+    /* Early validation: Check if IIO subsystem exists */
+    if (access("/sys/bus/iio", F_OK) != 0) {
+        log_error("IIO subsystem not found at /sys/bus/iio");
+        log_error("The Industrial I/O subsystem is required for accelerometer access");
+        log_error("Make sure CONFIG_IIO is enabled in your kernel configuration");
+        return 1;
+    }
+    
     /* Wait for kernel module sysfs interface to be available */
     char sysfs_path[PATH_MAX];
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wformat-truncation"
     snprintf(sysfs_path, sizeof(sysfs_path), "%s/base_vec", cfg.sysfs_path);
 #pragma GCC diagnostic pop
-    if (wait_for_path(sysfs_path, 30) < 0) {
+    if (wait_for_path(sysfs_path, 2) < 0) {
         log_error("Kernel module sysfs interface not found: %s", cfg.sysfs_path);
+        log_error("The chuwi-minibook-x kernel module does not appear to be loaded");
+        log_error("To load the module: sudo modprobe chuwi-minibook-x");
+        log_error("Or check if the module is available: modinfo chuwi-minibook-x");
         return 1;
     }
     
@@ -1104,19 +1159,40 @@ int main(int argc, char **argv)
     if (read_kernel_device_assignments() < 0) {
         log_error("Kernel device assignments not available - cannot continue");
         log_error("Make sure the kernel module is loaded and devices are detected");
+        
+        /* Provide helpful diagnostics */
+        log_error("Diagnostic information:");
+        log_error("  Expected sysfs path: %s", cfg.sysfs_path);
+        
+        /* Check if any IIO devices exist at all */
+        if (access("/sys/bus/iio/devices", F_OK) != 0) {
+            log_error("  No IIO subsystem found (/sys/bus/iio/devices missing)");
+            log_error("  The IIO subsystem may not be enabled in the kernel");
+        } else {
+            log_error("  IIO subsystem exists, checking for devices...");
+            int result = system("ls -la /sys/bus/iio/devices/ 2>/dev/null | head -10");
+            (void)result; /* Suppress unused result warning - diagnostic only */
+        }
+        
+        /* Check for accelerometer devices */
+        if (access("/dev/iio:device0", F_OK) != 0 && access("/dev/iio:device1", F_OK) != 0) {
+            log_error("  No IIO character devices found (/dev/iio:device*)");
+            log_error("  Try: ls -la /dev/iio:device*");
+        }
+        
         return 1;
     }
     
     /* Wait for devices to be ready */
     char base_path[PATH_MAX], lid_path[PATH_MAX];
     snprintf(base_path, sizeof(base_path), "/sys/bus/iio/devices/%s/in_accel_x_raw", cfg.base_dev);
-    if (wait_for_path(base_path, 30) < 0) {
+    if (wait_for_path(base_path, 2) < 0) {
         log_error("Base IIO device not ready: %s", cfg.base_dev);
         return 1;
     }
     
     snprintf(lid_path, sizeof(lid_path), "/sys/bus/iio/devices/%s/in_accel_x_raw", cfg.lid_dev);
-    if (wait_for_path(lid_path, 30) < 0) {
+    if (wait_for_path(lid_path, 2) < 0) {
         log_error("Lid IIO device not ready: %s", cfg.lid_dev);
         return 1;
     }
@@ -1141,6 +1217,16 @@ int main(int argc, char **argv)
     cmxd_orientation_set_log_debug(orientation_log_debug);
     cmxd_orientation_set_verbose(cfg.verbose);
     log_info("Orientation detection module initialized");
+    
+    /* Initialize mode detection module */
+    cmxd_modes_init();
+    cmxd_modes_set_log_debug(orientation_log_debug);
+    cmxd_modes_set_verbose(cfg.verbose);
+    log_info("Mode detection module initialized");
+    
+    /* Initialize calculations module */
+    cmxd_calculations_set_log_debug(orientation_log_debug);
+    log_info("Calculations module initialized");
     
     /* Run main loop */
     int ret = run_main_loop();

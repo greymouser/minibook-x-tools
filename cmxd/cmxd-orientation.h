@@ -50,6 +50,12 @@ const char* cmxd_get_platform_orientation(int orientation_code);
 /* Prevents orientation changes FROM portrait in tablet mode when tilted > 45° for reading stability */
 const char* cmxd_get_orientation_with_tablet_protection(double x, double y, double z, const char* current_mode);
 
+/* Get orientation with dual-sensor switching (enhanced for tablet mode) */
+/* Uses tilt angle to automatically switch between lid sensor and base sensor calculations */
+const char* cmxd_get_orientation_with_sensor_switching(double lid_x, double lid_y, double lid_z,
+                                                      double base_x, double base_y, double base_z,
+                                                      const char* current_mode);
+
 /* Simple orientation detection without tablet protection */
 const char* cmxd_get_orientation_simple(double x, double y, double z);
 

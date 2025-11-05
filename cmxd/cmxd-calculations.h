@@ -39,4 +39,17 @@ double cmxd_rad_to_deg(double radians);
 /* Convert degrees to radians */
 double cmxd_deg_to_rad(double degrees);
 
+/* Accelerometer sample structure */
+struct cmxd_accel_sample {
+    int x, y, z;
+    uint64_t timestamp;
+};
+
+/* Calculate hinge angle from base and lid accelerometer readings */
+/* Uses orientation-independent dot product calculation with direction detection for full 0-360° range */
+double cmxd_calculate_hinge_angle(const struct cmxd_accel_sample *base, const struct cmxd_accel_sample *lid);
+
+/* Set the debug logging function for calculations module */
+void cmxd_calculations_set_log_debug(void (*func)(const char *fmt, ...));
+
 #endif /* CMXD_CALCULATIONS_H */
