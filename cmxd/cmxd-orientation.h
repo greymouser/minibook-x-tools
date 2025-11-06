@@ -35,9 +35,6 @@ typedef enum {
 /* Initialize orientation detection module */
 void cmxd_orientation_init(void);
 
-/* Reset orientation detection state */
-void cmxd_orientation_reset(void);
-
 /* Determine raw device orientation based on accelerometer readings */
 /* Returns: 0=X-up, 1=Y-up, 2=Z-up, 3=X-down, 4=Y-down, 5=Z-down */
 int cmxd_get_device_orientation(double x, double y, double z);
@@ -47,7 +44,7 @@ int cmxd_get_device_orientation(double x, double y, double z);
 const char* cmxd_get_platform_orientation(int orientation_code);
 
 /* Get orientation with tablet mode reading protection */
-/* Prevents orientation changes FROM portrait in tablet mode when tilted > 45° for reading stability */
+/* Prevents orientation changes FROM portrait in tablet mode when tilted < 45° for lying flat stability */
 const char* cmxd_get_orientation_with_tablet_protection(double x, double y, double z, const char* current_mode);
 
 /* Get orientation with dual-sensor switching (enhanced for tablet mode) */
@@ -58,12 +55,6 @@ const char* cmxd_get_orientation_with_sensor_switching(double lid_x, double lid_
 
 /* Simple orientation detection without tablet protection */
 const char* cmxd_get_orientation_simple(double x, double y, double z);
-
-/* Check if orientation has changed from last reading */
-bool cmxd_orientation_has_changed(int current_orientation);
-
-/* Get the last detected orientation */
-int cmxd_get_last_orientation(void);
 
 /* Set verbose logging for orientation detection */
 void cmxd_orientation_set_verbose(bool verbose);

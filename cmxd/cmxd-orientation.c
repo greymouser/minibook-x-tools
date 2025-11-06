@@ -16,23 +16,10 @@
 #include <stdarg.h>
 
 /* Module state */
-static int last_detected_orientation = CMXD_ORIENTATION_UNKNOWN;
 static const char* last_known_orientation = CMXD_ORIENTATION_LANDSCAPE;
 static bool verbose_logging = false;
 
-/* Tablet mode protection state */
-static const char* stable_orientation = NULL;
-static int stable_count = 0;
-static const int STABILITY_THRESHOLD = 10;  /* Need 10 consistent samples */
-
-/* Tilt angle protection state */
-static bool tilt_lock_active = false;
-static int tilt_lock_count = 0;
-static int stability_count = 0;  /* Count stable readings for unlock */
-static double last_tilt_angle = 0.0;  /* Track tilt angle changes */
-static const int TILT_LOCK_THRESHOLD = 3;   /* Need 3 consistent samples for tilt lock */
-static const int STABILITY_UNLOCK_THRESHOLD = 10; /* Need 10 stable readings to unlock */
-static const double TILT_CHANGE_THRESHOLD = 15.0; /* Lock if tilt changes > 15° rapidly */
+/* Tablet mode protection state - simplified to just track last known orientation */
 
 /* Logging function (will be set by main) */
 static void (*log_debug_func)(const char *fmt, ...) = NULL;
@@ -59,19 +46,8 @@ static void debug_log(const char *fmt, ...)
 /* Initialize orientation detection module */
 void cmxd_orientation_init(void)
 {
-    last_detected_orientation = CMXD_ORIENTATION_UNKNOWN;
     last_known_orientation = CMXD_ORIENTATION_LANDSCAPE;
-    stable_orientation = NULL;
-    stable_count = 0;
-    tilt_lock_active = false;
-    tilt_lock_count = 0;
-    verbose_logging = true;  /* Enable verbose logging for tilt protection */
-}
-
-/* Reset orientation detection state */
-void cmxd_orientation_reset(void)
-{
-    cmxd_orientation_init();
+    verbose_logging = true;  /* Enable verbose logging for tablet protection */
 }
 
 /* Determine raw device orientation based on accelerometer readings */
@@ -132,66 +108,8 @@ const char* cmxd_get_orientation_with_tablet_protection(double x, double y, doub
     int orientation = cmxd_get_device_orientation(x, y, z);
     const char* orientation_name = cmxd_get_platform_orientation(orientation);
     
-    /* Calculate tilt angle for both tablet mode and general tilt protection */
+    /* Calculate tilt angle for tablet mode protection */
     double tilt_angle = cmxd_calculate_tilt_angle(x, y, z);
-    
-    /* Stability-based tilt protection: Lock during rapid changes, unlock when stable */
-    if (tilt_lock_active) {
-        /* Already locked - check for stability-based unlock */
-        double tilt_change = (last_tilt_angle != 0.0) ? fabs(tilt_angle - last_tilt_angle) : 0.0;
-        
-        if (tilt_change < 2.0) {  /* Stable reading (< 2° change) */
-            stability_count++;
-            if (stability_count >= STABILITY_UNLOCK_THRESHOLD) {
-                tilt_lock_active = false;
-                stability_count = 0;
-                tilt_lock_count = 0;
-                debug_log("Device stable for %d readings (tilt %.1f°), unlocking orientation changes", 
-                         STABILITY_UNLOCK_THRESHOLD, tilt_angle);
-            }
-        } else {
-            /* Not stable - reset stability counter */
-            stability_count = 0;
-        }
-    } else {
-        /* Not locked - check for rapid tilt changes that should trigger lock */
-        double tilt_change = (last_tilt_angle != 0.0) ? fabs(tilt_angle - last_tilt_angle) : 0.0;
-        
-        if (tilt_change > TILT_CHANGE_THRESHOLD) {
-            tilt_lock_count++;
-            if (tilt_lock_count >= TILT_LOCK_THRESHOLD) {
-                tilt_lock_active = true;
-                tilt_lock_count = 0;
-                stability_count = 0;
-                debug_log("Rapid tilt change detected (%.1f° change), locking orientation changes", tilt_change);
-            }
-        } else {
-            /* Stable movement - reset lock counter */
-            if (tilt_lock_count > 0) {
-                tilt_lock_count--;
-            }
-        }
-    }
-    
-    /* Remember this tilt angle for next comparison */
-    last_tilt_angle = tilt_angle;
-    
-    /* If general tilt lock is active, return the last known stable orientation */
-    if (tilt_lock_active && last_known_orientation != NULL) {
-        debug_log("General tilt lock active: maintaining %s (tilt %.1f°)", last_known_orientation, tilt_angle);
-        return last_known_orientation;
-    }
-    
-    /* Enhanced tablet reading protection: Only protect against orientation changes during 
-       actual reading scenarios with stability (not during active rotation) */
-    
-    /* Track orientation stability */
-    if (stable_orientation == NULL || strcmp(orientation_name, stable_orientation) != 0) {
-        stable_orientation = orientation_name;
-        stable_count = 1;
-    } else {
-        stable_count++;
-    }
     
     /* Option 3: Tilt-based orientation lock for tablet mode
      * When in tablet mode and starting in portrait, if tilt goes below 45° (lying flat),
@@ -212,8 +130,8 @@ const char* cmxd_get_orientation_with_tablet_protection(double x, double y, doub
     /* Normal orientation detection - update last known orientation */
     last_known_orientation = orientation_name;
     
-    debug_log("Normal orientation: %s (tilt %.1f°, mode %s, stable %d)", 
-             orientation_name, tilt_angle, current_mode ? current_mode : "unknown", stable_count);
+    debug_log("Normal orientation: %s (tilt %.1f°, mode %s)", 
+             orientation_name, tilt_angle, current_mode ? current_mode : "unknown");
     return orientation_name;
 }
 
@@ -247,29 +165,6 @@ const char* cmxd_get_orientation_with_sensor_switching(double lid_x, double lid_
     }
     
     return orientation_name;
-}
-
-/* Check if orientation has changed from last reading */
-bool cmxd_orientation_has_changed(int current_orientation)
-{
-    if (last_detected_orientation == CMXD_ORIENTATION_UNKNOWN) {
-        last_detected_orientation = current_orientation;
-        return true;  /* First reading counts as a change */
-    }
-    
-    bool changed = (current_orientation != last_detected_orientation);
-    if (changed) {
-        debug_log("Orientation change detected: %d -> %d", last_detected_orientation, current_orientation);
-        last_detected_orientation = current_orientation;
-    }
-    
-    return changed;
-}
-
-/* Get the last detected orientation */
-int cmxd_get_last_orientation(void)
-{
-    return last_detected_orientation;
 }
 
 /* Set verbose logging for orientation detection */

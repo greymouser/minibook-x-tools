@@ -196,9 +196,8 @@ double cmxd_calculate_hinge_angle_360(const struct cmxd_accel_sample *base, cons
     
     /* Calculate cross product to determine which side of 180° we're on */
     /* Cross product gives us the direction of rotation */
-    double cross_x = base_norm[1] * lid_norm[2] - base_norm[2] * lid_norm[1];
+    /* Only need Y component since hinge rotates around Y axis */
     double cross_y = base_norm[2] * lid_norm[0] - base_norm[0] * lid_norm[2];
-    double cross_z = base_norm[0] * lid_norm[1] - base_norm[1] * lid_norm[0];
     
     /* Use the Y component of cross product to determine fold direction */
     /* This assumes the hinge rotates around the Y axis */
