@@ -4,7 +4,7 @@
 
 config CMX
 	tristate "CMX - Chuwi Minibook X integrated platform driver"
-	depends on X86 && ACPI && INPUT && IIO && I2C
+	depends on X86 && ACPI && INPUT && IIO && I2C && MXC4005
 	help
 	  This driver provides integrated hardware support for the Chuwi Minibook X
 	  convertible laptop, including:
@@ -30,9 +30,9 @@ config CMX
 	  Say Y or M here if you have a Chuwi Minibook X and want integrated
 	  hardware support with tablet mode detection.
 
-config CHUWI_MINIBOOK_X_DEBUGFS
-	bool "Chuwi Minibook X debugging support"
-	depends on CHUWI_MINIBOOK_X && DEBUG_FS
+config CMX_DEBUGFS
+	bool "CMX debugging support"
+	depends on CMX && DEBUG_FS
 	help
 	  Enable debugfs interface for detailed inspection of driver state,
 	  hardware detection, and accelerometer data processing. This is useful
@@ -48,4 +48,4 @@ config CHUWI_MINIBOOK_X_DEBUGFS
 	  hardware detection or tablet mode detection issues.
 	  
 	  Say Y here if you need detailed debugging information for the
-	  Chuwi Minibook X driver.
+	  CMX driver.

@@ -191,36 +191,21 @@ Required kernel features:
 - `CONFIG_INPUT=y`
 - `CONFIG_IIO=y`
 - `CONFIG_I2C=y`
+- `CONFIG_MXC4005=m` (accelerometer driver dependency)
 
 ## Debugging
 
 ### Basic Troubleshooting
 ```bash
 # Check if module loaded
-lsmod | grep chuwi
+lsmod | grep cmx
 
 # Check kernel messages
-dmesg | grep -i "chuwi\|minibook"
-
-# Verify accelerometer devices
-ls /sys/bus/i2c/devices/ | grep -E "(12|13)"
+dmesg | grep -i "cmx"
 
 # Check input device
 ls /dev/input/by-path/ | grep tablet
 ```
-
-### Debug Mode
-Load with `debug_mode=1` for detailed output:
-```bash
-sudo insmod cmx.ko debug_mode=1
-dmesg | tail -20
-```
-
-Debug mode provides additional information about:
-- Mount matrix application for each accelerometer
-- Device instantiation details and target configuration
-- IIO device mapping and binding status
-- Detection and handling of existing devices vs new instantiation
 
 ## Implementation Notes
 
