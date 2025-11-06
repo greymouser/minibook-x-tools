@@ -1,0 +1,43 @@
+# Linux kernel module build artifacts
+*.ko
+*.o
+*.mod
+*.mod.c
+*.mod.o
+*.cmd
+.*.cmd
+Module.symvers
+modules.order
+.module-common.o
+.Module.symvers.cmd
+.modules.order.cmd
+
+# Backup files
+*.orig
+*~
+*.swp
+*.swo
+
+# Editor files
+.vscode/
+.idea/
+*.sublime-*
+
+# Temporary files
+*.tmp
+*.bak
+
+# Debug files
+*.debug
+core
+core.*
+
+# Compressed files (if any test logs get compressed)
+*.gz
+*.zip
+*.tar.gz
+*.tgz
+
+# Test output files
+test_output.log
+debug.log
