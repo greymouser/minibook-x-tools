@@ -580,6 +580,14 @@ int main(int argc, char **argv)
         return 1;
     }
     
+    /* Initialize data module - needed for device assignment reading */
+    struct cmxd_data_config data_cfg = {
+        .verbose = cfg.verbose
+    };
+    snprintf(data_cfg.sysfs_path, sizeof(data_cfg.sysfs_path), "%s", cfg.sysfs_path);
+    cmxd_data_init(&data_cfg, log_msg);
+    log_info("Data module initialized");
+    
     /* Read device assignments from kernel module - REQUIRED */
     if (cmxd_read_kernel_device_assignments(cfg.base_dev, sizeof(cfg.base_dev), 
                                             cfg.lid_dev, sizeof(cfg.lid_dev)) < 0) {
@@ -649,14 +657,6 @@ int main(int argc, char **argv)
     cmxd_modes_set_log_debug(orientation_log_debug);
     cmxd_modes_set_verbose(cfg.verbose);
     log_info("Mode detection module initialized");
-    
-    /* Initialize data module */
-    struct cmxd_data_config data_cfg = {
-        .verbose = cfg.verbose
-    };
-    snprintf(data_cfg.sysfs_path, sizeof(data_cfg.sysfs_path), "%s", cfg.sysfs_path);
-    cmxd_data_init(&data_cfg, log_msg);
-    log_info("Data module initialized");
     
     /* Initialize calculations module */
     cmxd_calculations_set_log_debug(orientation_log_debug);
