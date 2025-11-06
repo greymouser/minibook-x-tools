@@ -387,7 +387,7 @@ int cmxd_setup_iio_buffer(struct iio_buffer *buf, const char *device_name) {
     buf->sample_size = 16; /* 3 * 2 bytes + 8 bytes timestamp + padding */
     buf->enabled = 1;
     
-    log_info("IIO buffer setup complete for %s", device_name);
+    log_debug("IIO buffer setup complete for %s", device_name);
     return 0;
 }
 

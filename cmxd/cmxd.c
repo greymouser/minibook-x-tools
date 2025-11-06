@@ -198,13 +198,13 @@ static int run_main_loop(void)
     int base_valid = 0, lid_valid = 0;
     
     /* Ensure IIO trigger exists (create if needed, but leave persistent) */
-    log_info("Ensuring IIO trigger is available...");
+    log_debug("Ensuring IIO trigger is available...");
     if (cmxd_ensure_iio_trigger_exists() < 0) {
         log_error("Failed to ensure IIO trigger exists");
         return -1;
     }
     
-    log_info("Setting up IIO buffers for event-driven reading...");
+    log_debug("Setting up IIO buffers for event-driven reading...");
     
     /* Setup IIO buffers */
     if (cmxd_setup_iio_buffer(&base_buf, cfg.base_dev) < 0) {
@@ -224,7 +224,7 @@ static int run_main_loop(void)
     poll_fds[1].fd = lid_buf.buffer_fd;
     poll_fds[1].events = POLLIN;
     
-    log_info("Starting event-driven main loop...");
+    log_debug("Starting event-driven main loop...");
     
     while (running) {
         int poll_result = poll(poll_fds, 2, poll_timeout);
@@ -341,7 +341,7 @@ static int run_main_loop(void)
                 lid_sample.x, lid_sample.y, lid_sample.z,
                 base_sample.x, base_sample.y, base_sample.z, device_mode);
             
-            log_info("Processing sensor data - Base[%d,%d,%d] Lid[%d,%d,%d] Hinge=%.1f° Tilt=%.1f° -> Mode: %s, Orientation: %s", 
+            log_debug("Processing sensor data - Base[%d,%d,%d] Lid[%d,%d,%d] Hinge=%.1f° Tilt=%.1f° -> Mode: %s, Orientation: %s", 
                     base_sample.x, base_sample.y, base_sample.z,
                     lid_sample.x, lid_sample.y, lid_sample.z, hinge_angle, tilt_angle, device_mode, orientation);
             
@@ -587,7 +587,7 @@ int main(int argc, char **argv)
     };
     snprintf(data_cfg.sysfs_path, sizeof(data_cfg.sysfs_path), "%s", cfg.sysfs_path);
     cmxd_data_init(&data_cfg, log_msg);
-    log_info("Data module initialized");
+    log_debug("Data module initialized");
     
     /* Read device assignments from kernel module - REQUIRED */
     if (cmxd_read_kernel_device_assignments(cfg.base_dev, sizeof(cfg.base_dev), 
@@ -651,17 +651,17 @@ int main(int argc, char **argv)
     cmxd_orientation_init();
     cmxd_orientation_set_log_debug(orientation_log_debug);
     cmxd_orientation_set_verbose(cfg.verbose);
-    log_info("Orientation detection module initialized");
+    log_debug("Orientation detection module initialized");
     
     /* Initialize mode detection module */
     cmxd_modes_init();
     cmxd_modes_set_log_debug(orientation_log_debug);
     cmxd_modes_set_verbose(cfg.verbose);
-    log_info("Mode detection module initialized");
+    log_debug("Mode detection module initialized");
     
     /* Initialize calculations module */
     cmxd_calculations_set_log_debug(orientation_log_debug);
-    log_info("Calculations module initialized");
+    log_debug("Calculations module initialized");
     
     /* Run main loop */
     int ret = run_main_loop();

@@ -17,17 +17,17 @@
 const double CMXD_MODE_CLOSING_MAX = 45.0;      /* 0°-45°: Closing mode */
 const double CMXD_MODE_LAPTOP_MAX = 145.0;      /* 45°-145°: Laptop mode */
 const double CMXD_MODE_FLAT_MAX = 225.0;        /* 145°-225°: Flat mode */
-const double CMXD_MODE_TENT_MAX = 315.0;        /* 225°-315°: Tent mode */
+const double CMXD_MODE_TENT_MAX = 330.0;        /* 225°-315°: Tent mode */
 const double CMXD_MODE_TABLET_MAX = 360.0;      /* 315°-360° (& 0°-45°): Tablet mode */
 
 /* Hysteresis amount to prevent spurious mode switching */
 const double CMXD_MODE_HYSTERESIS = 15.0;          /* Standard: 15° of hysteresis around boundaries */
 
 /* Spurious data filtering - require consistency before mode changes */
-const int CMXD_MODE_STABILITY_SAMPLES = 5;         /* Standard: 5 consistent readings required */
+const int CMXD_MODE_STABILITY_SAMPLES = 4;         /* Standard: 5 consistent readings required */
 
 /* Orientation change detection to prevent mode changes during device rotation */
-const int CMXD_ORIENTATION_FREEZE_DURATION = 8;    /* Number of samples to freeze after orientation change */
+const int CMXD_ORIENTATION_FREEZE_DURATION = 6;    /* Number of samples to freeze after orientation change */
 
 /* Module state */
 static const char* last_stable_mode = CMXD_MODE_LAPTOP;  /* Default to laptop mode */
