@@ -193,23 +193,19 @@ const char* cmxd_get_orientation_with_tablet_protection(double x, double y, doub
         stable_count++;
     }
     
-    /* Only apply tablet protection if:
-     * 1. In tablet mode
-     * 2. High tilt angle (reading position)  
-     * 3. Currently stable in portrait (not actively rotating)
-     * 4. Trying to switch to landscape
-     * 5. Have been stable for a while (not just started rotation) */
+    /* Option 3: Tilt-based orientation lock for tablet mode
+     * When in tablet mode and starting in portrait, if tilt goes below 45° (lying flat),
+     * lock orientation until it comes back above 45° to prevent unwanted landscape switches */
     if (current_mode && strcmp(current_mode, "tablet") == 0 && 
-        tilt_angle > 70.0 &&  /* Higher threshold for actual reading positions */
-        stable_count >= STABILITY_THRESHOLD &&  /* Must be stable, not actively rotating */
         last_known_orientation != NULL && 
         (strcmp(last_known_orientation, CMXD_ORIENTATION_PORTRAIT) == 0 || 
          strcmp(last_known_orientation, CMXD_ORIENTATION_PORTRAIT_FLIPPED) == 0) &&  /* Currently in portrait */
+        tilt_angle < 45.0 &&  /* Tilted flat (lying on table) */
         (strcmp(orientation_name, CMXD_ORIENTATION_LANDSCAPE) == 0 || 
          strcmp(orientation_name, CMXD_ORIENTATION_LANDSCAPE_FLIPPED) == 0)) {         /* Trying to switch to landscape */
         
-        debug_log("Tablet reading protection: maintaining %s (tilt %.1f° > 70°, stable %d samples), blocking switch to %s", 
-                 last_known_orientation, tilt_angle, stable_count, orientation_name);
+        debug_log("Tablet tilt lock: maintaining %s (tilt %.1f° < 45° lying flat), blocking switch to %s", 
+                 last_known_orientation, tilt_angle, orientation_name);
         return last_known_orientation;
     }
     
@@ -234,13 +230,12 @@ const char* cmxd_get_orientation_with_sensor_switching(double lid_x, double lid_
     
     /* Only use tablet-specific orientation method in actual tablet mode */
     if (current_mode && (strcmp(current_mode, "tablet") == 0 || strcmp(current_mode, "tent") == 0)) {
-        /* Tablet/Tent mode: Use base sensor direct orientation */
+        /* Tablet/Tent mode: Use base sensor direct orientation with tablet protection */
         debug_log("Tablet/tent mode (%s, tilt %.1f°): using base sensor direct orientation", 
                  current_mode, tilt_angle);
         
-        /* Get base sensor orientation directly */
-        int base_orientation = cmxd_get_device_orientation(base_x, base_y, base_z);
-        orientation_name = cmxd_get_platform_orientation(base_orientation);
+        /* Get base sensor orientation with tablet protection */
+        orientation_name = cmxd_get_orientation_with_tablet_protection(base_x, base_y, base_z, current_mode);
         
         debug_log("Tablet base sensor orientation: %s (base X=%.1f, Y=%.1f, Z=%.1f)", 
                  orientation_name, base_x, base_y, base_z);
