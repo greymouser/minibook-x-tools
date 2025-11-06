@@ -1,8 +1,10 @@
 /* SPDX-License-Identifier: GPL-2.0 */
 /*
- * Orientation detection for CMXD (Chuwi Minibook X Daemon)
+ * Device Orientation Detection Module
  * 
- * Device orientation detection using lid accelerometer
+ * Provides dual-sensor orientation detection for the Chuwi Minibook X,
+ * supporting both single accelerometer and dual-accelerometer configurations.
+ * Includes tablet mode awareness and tilt-based sensor switching.
  * 
  * Copyright (c) 2025 Armando DiCianno <armando@noonshy.com>
  */
@@ -13,53 +15,42 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-/* Orientation constants */
 #define CMXD_ORIENTATION_UNKNOWN -1
 
-/* Device orientation codes (internal) */
+/* Raw device orientation codes based on accelerometer dominant axis */
 typedef enum {
-    CMXD_DEVICE_X_UP = 0,
-    CMXD_DEVICE_Y_UP = 1,
-    CMXD_DEVICE_Z_UP = 2,
-    CMXD_DEVICE_X_DOWN = 3,
-    CMXD_DEVICE_Y_DOWN = 4,
-    CMXD_DEVICE_Z_DOWN = 5
+    CMXD_DEVICE_X_UP = 0,    /* X-axis pointing up */
+    CMXD_DEVICE_Y_UP = 1,    /* Y-axis pointing up */
+    CMXD_DEVICE_Z_UP = 2,    /* Z-axis pointing up (flat) */
+    CMXD_DEVICE_X_DOWN = 3,  /* X-axis pointing down */
+    CMXD_DEVICE_Y_DOWN = 4,  /* Y-axis pointing down */
+    CMXD_DEVICE_Z_DOWN = 5   /* Z-axis pointing down (upside down) */
 } cmxd_device_orientation_t;
 
-/* Platform orientation names */
+/* Standard platform orientation strings */
 #define CMXD_ORIENTATION_LANDSCAPE "landscape"
 #define CMXD_ORIENTATION_LANDSCAPE_FLIPPED "landscape-flipped"
 #define CMXD_ORIENTATION_PORTRAIT "portrait"
 #define CMXD_ORIENTATION_PORTRAIT_FLIPPED "portrait-flipped"
 
-/* Initialize orientation detection module */
+/* Module initialization */
 void cmxd_orientation_init(void);
 
-/* Determine raw device orientation based on accelerometer readings */
-/* Returns: 0=X-up, 1=Y-up, 2=Z-up, 3=X-down, 4=Y-down, 5=Z-down */
+/* Core orientation detection functions */
 int cmxd_get_device_orientation(double x, double y, double z);
-
-/* Map device orientation to standard platform terms */
-/* Uses lid sensor orientation to determine screen orientation */
 const char* cmxd_get_platform_orientation(int orientation_code);
 
-/* Get orientation with tablet mode reading protection */
-/* Prevents orientation changes FROM portrait in tablet mode when tilted < 45° for lying flat stability */
+/* Enhanced orientation detection with tablet mode awareness */
 const char* cmxd_get_orientation_with_tablet_protection(double x, double y, double z, const char* current_mode);
-
-/* Get orientation with dual-sensor switching (enhanced for tablet mode) */
-/* Uses tilt angle to automatically switch between lid sensor and base sensor calculations */
 const char* cmxd_get_orientation_with_sensor_switching(double lid_x, double lid_y, double lid_z,
                                                       double base_x, double base_y, double base_z,
                                                       const char* current_mode);
 
-/* Simple orientation detection without tablet protection */
+/* Simple orientation detection */
 const char* cmxd_get_orientation_simple(double x, double y, double z);
 
-/* Set verbose logging for orientation detection */
+/* Module configuration */
 void cmxd_orientation_set_verbose(bool verbose);
-
-/* Set the debug logging function for orientation module */
 void cmxd_orientation_set_log_debug(void (*func)(const char *fmt, ...));
 
 #endif /* CMXD_ORIENTATION_H */

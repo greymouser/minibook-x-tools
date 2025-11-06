@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: GPL-2.0
 /* 
- * Chuwi Minibook X Daemon (cmxd) - New Generation
+ * Chuwi Minibook X Daemon - Main Application
  * 
- * Userspace daemon that reads accelerometer data from IIO devices
- * and feeds it to the tablet mode detection kernel module.
+ * Primary daemon executable that coordinates accelerometer data collection,
+ * mode detection, and kernel module communication. Handles signal management,
+ * configuration, and the main event loop for continuous device monitoring.
  *
  * Copyright (c) 2025 Armando DiCianno <armando@noonshy.com>
  */
@@ -48,11 +49,13 @@
 #define PROGRAM_NAME "cmxd"
 #define VERSION "2.0"
 
-/* Device name maximum length */
 #define DEVICE_NAME_MAX 128
 
-/* Forward declarations */
-/* Forward declarations for main functions only - data I/O moved to cmxd-data module */
+/*
+ * =============================================================================
+ * CONFIGURATION AND GLOBAL STATE
+ * =============================================================================
+ */
 
 /* Configuration */
 struct config {
@@ -76,8 +79,14 @@ static struct config cfg = {
     .sysfs_path = CMXD_DEFAULT_SYSFS_PATH
 };
 
-/* Signal handlers */
-static void cleanup_and_exit(void);  /* Forward declaration */
+/*
+ * =============================================================================
+ * SIGNAL HANDLING AND CLEANUP
+ * =============================================================================
+ */
+
+/* Forward declaration for cleanup */
+static void cleanup_and_exit(void);
 
 static void signal_handler(int sig)
 {
@@ -94,6 +103,12 @@ static void signal_handler(int sig)
             break;
     }
 }
+
+/*
+ * =============================================================================
+ * LOGGING SYSTEM
+ * =============================================================================
+ */
 
 /* Logging functions */
 static void log_msg(const char *level, const char *fmt, ...)
@@ -134,7 +149,11 @@ static void orientation_log_debug(const char *fmt, ...)
     log_debug("%s", buffer);
 }
 
-
+/*
+ * =============================================================================
+ * APPLICATION LIFECYCLE
+ * =============================================================================
+ */
 
 /* Cleanup function to restore laptop mode on exit */
 /* This prevents getting locked out in tablet mode when daemon exits */
@@ -160,6 +179,12 @@ static void cleanup_and_exit(void)
     
     log_info("Cleanup complete - laptop mode restored");
 }
+
+/*
+ * =============================================================================
+ * MAIN PROCESSING LOOP
+ * =============================================================================
+ */
 
 /* Trigger sysfs trigger to generate IIO buffer samples */
 static int trigger_iio_sampling(void) {

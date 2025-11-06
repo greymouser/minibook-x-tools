@@ -1,7 +1,10 @@
 /* SPDX-License-Identifier: GPL-2.0 */
-/**
- * Data handling module for cmxd - handles all file I/O and IIO operations
- * Extracted from main cmxd.c for better modularity
+/*
+ * Data Handling Module - File I/O and IIO Operations
+ * 
+ * Provides centralized data access functions including file operations,
+ * IIO device management, and kernel module communication via sysfs.
+ * Handles accelerometer data reading, scaling, and buffer management.
  */
 
 #include "cmxd-data.h"
@@ -27,12 +30,24 @@ static log_func_t log_function = NULL;
 #define log_info(fmt, ...)  do { if (log_function) log_function("INFO", fmt, ##__VA_ARGS__); } while(0)
 #define log_debug(fmt, ...) do { if (log_function) log_function("DEBUG", fmt, ##__VA_ARGS__); } while(0)
 
+/*
+ * =============================================================================
+ * MODULE INITIALIZATION
+ * =============================================================================
+ */
+
 /* Initialize data module */
 void cmxd_data_init(struct cmxd_data_config *config, log_func_t log_func)
 {
     data_config = config;
     log_function = log_func;
 }
+
+/*
+ * =============================================================================
+ * SAFE FILE OPERATIONS
+ * =============================================================================
+ */
 
 /* Safe file operations */
 FILE *cmxd_safe_fopen(const char *path, const char *mode)
@@ -53,6 +68,12 @@ int cmxd_safe_fclose(FILE *f, const char *path)
     return 0;
 }
 
+/*
+ * =============================================================================
+ * DATA PROCESSING AND SCALING
+ * =============================================================================
+ */
+
 /* Apply scale factor and convert to microunits */
 void cmxd_apply_scale(int raw_x, int raw_y, int raw_z, double scale,
                       int *scaled_x, int *scaled_y, int *scaled_z)
@@ -69,6 +90,12 @@ void cmxd_apply_scale(int raw_x, int raw_y, int raw_z, double scale,
         *scaled_z = raw_z * 1000;
     }
 }
+
+/*
+ * =============================================================================
+ * KERNEL MODULE COMMUNICATION (SYSFS)
+ * =============================================================================
+ */
 
 /* Write vector to kernel module sysfs */
 int cmxd_write_vector(const char *name, int x, int y, int z)
@@ -163,6 +190,12 @@ int cmxd_write_orientation(const char *orientation)
     return 0;
 }
 
+/*
+ * =============================================================================
+ * IIO DEVICE DISCOVERY AND MANAGEMENT
+ * =============================================================================
+ */
+
 /* Find IIO device for given I2C bus/address */
 int cmxd_find_iio_device_for_i2c(int bus, int addr, char *device_name, size_t name_size)
 {
@@ -193,6 +226,12 @@ int cmxd_find_iio_device_for_i2c(int bus, int addr, char *device_name, size_t na
     
     return -1;
 }
+
+/*
+ * =============================================================================
+ * IIO BUFFER MANAGEMENT
+ * =============================================================================
+ */
 
 /* Ensure IIO sysfs trigger exists (create if needed, but don't manage lifecycle) */
 int cmxd_ensure_iio_trigger_exists(void) {
@@ -477,6 +516,12 @@ int cmxd_parse_accel_value(const uint8_t *data) {
     
     return (int16_t)raw;
 }
+
+/*
+ * =============================================================================
+ * UTILITY FUNCTIONS
+ * =============================================================================
+ */
 
 /* Wait for a path to exist */
 int cmxd_wait_for_path(const char *path, int timeout_sec)

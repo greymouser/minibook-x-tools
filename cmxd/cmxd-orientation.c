@@ -1,8 +1,10 @@
 /* SPDX-License-Identifier: GPL-2.0 */
 /*
- * Orientation detection for CMXD (Chuwi Minibook X Daemon)
+ * Device Orientation Detection Implementation
  * 
- * Device orientation detection using lid accelerometer
+ * Implements accelerometer-based orientation detection with tablet mode
+ * awareness and dual-sensor support. Provides platform-independent 
+ * orientation mapping and stability protection.
  * 
  * Copyright (c) 2025 Armando DiCianno <armando@noonshy.com>
  */
@@ -15,14 +17,24 @@
 #include <math.h>
 #include <stdarg.h>
 
+/*
+ * =============================================================================
+ * MODULE STATE AND CONFIGURATION
+ * =============================================================================
+ */
+
 /* Module state */
 static const char* last_known_orientation = CMXD_ORIENTATION_LANDSCAPE;
 static bool verbose_logging = false;
 
-/* Tablet mode protection state - simplified to just track last known orientation */
-
-/* Logging function (will be set by main) */
+/* Logging function (set by main application) */
 static void (*log_debug_func)(const char *fmt, ...) = NULL;
+
+/*
+ * =============================================================================
+ * LOGGING AND INITIALIZATION
+ * =============================================================================
+ */
 
 /* Set the debug logging function */
 void cmxd_orientation_set_log_debug(void (*func)(const char *fmt, ...))
@@ -50,8 +62,13 @@ void cmxd_orientation_init(void)
     verbose_logging = true;  /* Enable verbose logging for tablet protection */
 }
 
+/*
+ * =============================================================================
+ * CORE ORIENTATION DETECTION
+ * =============================================================================
+ */
+
 /* Determine raw device orientation based on accelerometer readings */
-/* Returns: 0=X-up, 1=Y-up, 2=Z-up, 3=X-down, 4=Y-down, 5=Z-down */
 int cmxd_get_device_orientation(double x, double y, double z)
 {
     double abs_x = fabs(x);
@@ -68,8 +85,13 @@ int cmxd_get_device_orientation(double x, double y, double z)
     }
 }
 
+/*
+ * =============================================================================
+ * PLATFORM ORIENTATION MAPPING
+ * =============================================================================
+ */
+
 /* Map device orientation to standard platform terms */
-/* Uses lid sensor orientation to determine screen orientation */
 const char* cmxd_get_platform_orientation(int orientation_code)
 {
     switch (orientation_code) {
