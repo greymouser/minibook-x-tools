@@ -67,7 +67,7 @@ void cmxd_modes_init(void)
     orientation_freeze_samples = 0;
     stability_count = 0;
     candidate_mode = NULL;
-    verbose_logging = true;  /* Enable verbose logging for mode detection */
+    verbose_logging = false;
 }
 
 /* Reset mode detection state */
@@ -201,6 +201,15 @@ const char* cmxd_get_stable_device_mode(double angle, int orientation)
     int required_stability = CMXD_MODE_STABILITY_SAMPLES;  /* 5 samples for all modes */
     
     const char* new_mode = cmxd_get_device_mode(angle, last_stable_mode);
+    
+    /* Special case: tent mode wrap-around prevention for tablet transitions */
+    if (strcmp(last_stable_mode, CMXD_MODE_TENT) == 0 && 
+        candidate_mode && strcmp(candidate_mode, CMXD_MODE_TABLET) == 0 &&
+        angle < 90.0 && stability_count > 0) {
+        /* We're in tent mode, building tablet stability, and got a low angle that could be wrap-around */
+        debug_log("Tent->Tablet wrap-around: treating %.1f° as tablet stability sample", angle);
+        new_mode = CMXD_MODE_TABLET;  /* Treat this as a tablet reading for stability */
+    }
     
     /* If mode hasn't changed, update tracking and return */
     if (strcmp(new_mode, last_stable_mode) == 0) {
