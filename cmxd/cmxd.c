@@ -35,6 +35,7 @@
 #include "cmxd-orientation.h"
 #include "cmxd-modes.h"
 #include "cmxd-data.h"
+#include "cmxd-paths.h"
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -72,7 +73,7 @@ static struct config cfg = {
     .buffer_timeout_ms = 100,
     .daemon_mode = 0,
     .verbose = 0,
-    .sysfs_path = "/sys/devices/platform/chuwi-minibook-x"
+    .sysfs_path = CMXD_DEFAULT_SYSFS_PATH
 };
 
 /* Signal handlers */
@@ -168,7 +169,7 @@ static int trigger_iio_sampling(void) {
     
     /* Find the first available trigger */
     for (trigger_id = 0; trigger_id < 10; trigger_id++) {
-        snprintf(path, sizeof(path), "/sys/bus/iio/devices/trigger%d/trigger_now", trigger_id);
+        snprintf(path, sizeof(path), IIO_TRIGGER_NOW_TEMPLATE, trigger_id);
         fp = fopen(path, "w");
         if (fp) {
             if (fprintf(fp, "1") >= 0) {
@@ -556,11 +557,11 @@ int main(int argc, char **argv)
     }
     
     /* Load configuration file (may override some defaults) */
-    load_config_file("/etc/default/cmxd");
+    load_config_file(CMXD_DEFAULT_CONFIG_FILE);
     
     /* Early validation: Check if IIO subsystem exists */
-    if (access("/sys/bus/iio", F_OK) != 0) {
-        log_error("IIO subsystem not found at /sys/bus/iio");
+    if (access(IIO_BASE_PATH, F_OK) != 0) {
+        log_error("IIO subsystem not found at %s", IIO_BASE_PATH);
         log_error("The Industrial I/O subsystem is required for accelerometer access");
         log_error("Make sure CONFIG_IIO is enabled in your kernel configuration");
         return 1;
@@ -599,19 +600,19 @@ int main(int argc, char **argv)
         log_error("  Expected sysfs path: %s", cfg.sysfs_path);
         
         /* Check if any IIO devices exist at all */
-        if (access("/sys/bus/iio/devices", F_OK) != 0) {
-            log_error("  No IIO subsystem found (/sys/bus/iio/devices missing)");
+        if (access(IIO_DEVICES_PATH, F_OK) != 0) {
+            log_error("  No IIO subsystem found (%s missing)", IIO_DEVICES_PATH);
             log_error("  The IIO subsystem may not be enabled in the kernel");
         } else {
             log_error("  IIO subsystem exists, checking for devices...");
-            int result = system("ls -la /sys/bus/iio/devices/ 2>/dev/null | head -10");
+            int result = system(IIO_DEVICES_LIST_CMD);
             (void)result; /* Suppress unused result warning - diagnostic only */
         }
         
         /* Check for accelerometer devices */
-        if (access("/dev/iio:device0", F_OK) != 0 && access("/dev/iio:device1", F_OK) != 0) {
-            log_error("  No IIO character devices found (/dev/iio:device*)");
-            log_error("  Try: ls -la /dev/iio:device*");
+        if (access(IIO_DEV_DEVICE0, F_OK) != 0 && access(IIO_DEV_DEVICE1, F_OK) != 0) {
+            log_error("  No IIO character devices found (%s)", IIO_DEV_CHAR_MSG);
+            log_error("  Try: %s", IIO_DEV_LIST_CMD);
         }
         
         return 1;
@@ -619,13 +620,13 @@ int main(int argc, char **argv)
     
     /* Wait for devices to be ready */
     char base_path[PATH_MAX], lid_path[PATH_MAX];
-    snprintf(base_path, sizeof(base_path), "/sys/bus/iio/devices/%s/in_accel_x_raw", cfg.base_dev);
+    snprintf(base_path, sizeof(base_path), IIO_ACCEL_X_RAW_TEMPLATE, cfg.base_dev);
     if (cmxd_wait_for_path(base_path, 2) < 0) {
         log_error("Base IIO device not ready: %s", cfg.base_dev);
         return 1;
     }
     
-    snprintf(lid_path, sizeof(lid_path), "/sys/bus/iio/devices/%s/in_accel_x_raw", cfg.lid_dev);
+    snprintf(lid_path, sizeof(lid_path), IIO_ACCEL_X_RAW_TEMPLATE, cfg.lid_dev);
     if (cmxd_wait_for_path(lid_path, 2) < 0) {
         log_error("Lid IIO device not ready: %s", cfg.lid_dev);
         return 1;

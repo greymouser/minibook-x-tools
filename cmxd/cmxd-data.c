@@ -1,13 +1,11 @@
 /* SPDX-License-Identifier: GPL-2.0 */
-/*
- * Data handling for CMXD (Chuwi Minibook X Daemon)
- * 
- * File I/O operations, IIO device handling, and sysfs communication
- * 
- * Copyright (c) 2025 Armando DiCianno <armando@noonshy.com>
+/**
+ * Data handling module for cmxd - handles all file I/O and IIO operations
+ * Extracted from main cmxd.c for better modularity
  */
 
 #include "cmxd-data.h"
+#include "cmxd-paths.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -178,7 +176,7 @@ int cmxd_find_iio_device_for_i2c(int bus, int addr, char *device_name, size_t na
     
     /* Search through IIO devices to find one with matching I2C device */
     for (int i = 0; i < 10; i++) {
-        snprintf(path, sizeof(path), "/sys/bus/iio/devices/iio:device%d/device", i);
+        snprintf(path, sizeof(path), IIO_DEVICE_TEMPLATE, i);
         
         /* Read the symlink to see if it points to our I2C device */
         link_len = readlink(path, link_target, sizeof(link_target) - 1);
@@ -203,7 +201,7 @@ int cmxd_ensure_iio_trigger_exists(void) {
     
     /* Check if any trigger already exists (0-9) */
     for (trigger_id = 0; trigger_id < 10; trigger_id++) {
-        snprintf(path, sizeof(path), "/sys/bus/iio/devices/trigger%d", trigger_id);
+        snprintf(path, sizeof(path), IIO_TRIGGER_TEMPLATE, trigger_id);
         if (access(path, F_OK) == 0) {
             log_debug("Using existing trigger: sysfstrig%d", trigger_id);
             return 0;  /* Found existing trigger */
@@ -211,7 +209,7 @@ int cmxd_ensure_iio_trigger_exists(void) {
     }
     
     /* No trigger exists, create trigger0 */
-    FILE *fp = fopen("/sys/bus/iio/devices/iio_sysfs_trigger/add_trigger", "w");
+    FILE *fp = fopen(IIO_SYSFS_TRIGGER_ADD_PATH, "w");
     if (!fp) {
         log_error("Failed to open trigger creation interface: %s", strerror(errno));
         return -1;
@@ -226,7 +224,7 @@ int cmxd_ensure_iio_trigger_exists(void) {
     fclose(fp);
     
     /* Verify the trigger was created */
-    snprintf(path, sizeof(path), "/sys/bus/iio/devices/trigger0");
+    snprintf(path, sizeof(path), IIO_TRIGGER0_PATH);
     if (access(path, F_OK) == 0) {
         log_info("Created persistent IIO trigger: sysfstrig0");
         return 0;
@@ -256,7 +254,7 @@ int cmxd_setup_iio_buffer(struct iio_buffer *buf, const char *device_name) {
     /* Use the first available trigger (we ensured one exists) */
     int trigger_id;
     for (trigger_id = 0; trigger_id < 10; trigger_id++) {
-        snprintf(path, sizeof(path), "/sys/bus/iio/devices/trigger%d", trigger_id);
+        snprintf(path, sizeof(path), IIO_TRIGGER_TEMPLATE, trigger_id);
         if (access(path, F_OK) == 0) {
             snprintf(buf->trigger_name, sizeof(buf->trigger_name), "sysfstrig%d", trigger_id);
             log_debug("Using trigger: %s", buf->trigger_name);
@@ -270,7 +268,7 @@ int cmxd_setup_iio_buffer(struct iio_buffer *buf, const char *device_name) {
     }
     
     /* Read scan element indices */
-    snprintf(path, sizeof(path), "/sys/bus/iio/devices/%s/scan_elements/in_accel_x_index", device_name);
+    snprintf(path, sizeof(path), IIO_SCAN_ACCEL_X_INDEX_TEMPLATE, device_name);
     fp = fopen(path, "r");
     if (!fp || fscanf(fp, "%d", &buf->x_index) != 1) {
         log_error("Failed to read X index for %s", device_name);
@@ -279,7 +277,7 @@ int cmxd_setup_iio_buffer(struct iio_buffer *buf, const char *device_name) {
     }
     fclose(fp);
     
-    snprintf(path, sizeof(path), "/sys/bus/iio/devices/%s/scan_elements/in_accel_y_index", device_name);
+    snprintf(path, sizeof(path), IIO_SCAN_ACCEL_Y_INDEX_TEMPLATE, device_name);
     fp = fopen(path, "r");
     if (!fp || fscanf(fp, "%d", &buf->y_index) != 1) {
         log_error("Failed to read Y index for %s", device_name);
@@ -288,7 +286,7 @@ int cmxd_setup_iio_buffer(struct iio_buffer *buf, const char *device_name) {
     }
     fclose(fp);
     
-    snprintf(path, sizeof(path), "/sys/bus/iio/devices/%s/scan_elements/in_accel_z_index", device_name);
+    snprintf(path, sizeof(path), IIO_SCAN_ACCEL_Z_INDEX_TEMPLATE, device_name);
     fp = fopen(path, "r");
     if (!fp || fscanf(fp, "%d", &buf->z_index) != 1) {
         log_error("Failed to read Z index for %s", device_name);
@@ -297,7 +295,7 @@ int cmxd_setup_iio_buffer(struct iio_buffer *buf, const char *device_name) {
     }
     fclose(fp);
     
-    snprintf(path, sizeof(path), "/sys/bus/iio/devices/%s/scan_elements/in_timestamp_index", device_name);
+    snprintf(path, sizeof(path), IIO_SCAN_TIMESTAMP_INDEX_TEMPLATE, device_name);
     fp = fopen(path, "r");
     if (!fp || fscanf(fp, "%d", &buf->timestamp_index) != 1) {
         log_error("Failed to read timestamp index for %s", device_name);
@@ -307,7 +305,7 @@ int cmxd_setup_iio_buffer(struct iio_buffer *buf, const char *device_name) {
     fclose(fp);
     
     /* Enable scan elements */
-    snprintf(path, sizeof(path), "/sys/bus/iio/devices/%s/scan_elements/in_accel_x_en", device_name);
+    snprintf(path, sizeof(path), IIO_SCAN_ACCEL_X_EN_TEMPLATE, device_name);
     fp = fopen(path, "w");
     if (!fp || fprintf(fp, "1") < 0) {
         log_error("Failed to enable X scan element for %s", device_name);
@@ -316,7 +314,7 @@ int cmxd_setup_iio_buffer(struct iio_buffer *buf, const char *device_name) {
     }
     fclose(fp);
     
-    snprintf(path, sizeof(path), "/sys/bus/iio/devices/%s/scan_elements/in_accel_y_en", device_name);
+    snprintf(path, sizeof(path), IIO_SCAN_ACCEL_Y_EN_TEMPLATE, device_name);
     fp = fopen(path, "w");
     if (!fp || fprintf(fp, "1") < 0) {
         log_error("Failed to enable Y scan element for %s", device_name);
@@ -325,7 +323,7 @@ int cmxd_setup_iio_buffer(struct iio_buffer *buf, const char *device_name) {
     }
     fclose(fp);
     
-    snprintf(path, sizeof(path), "/sys/bus/iio/devices/%s/scan_elements/in_accel_z_en", device_name);
+    snprintf(path, sizeof(path), IIO_SCAN_ACCEL_Z_EN_TEMPLATE, device_name);
     fp = fopen(path, "w");
     if (!fp || fprintf(fp, "1") < 0) {
         log_error("Failed to enable Z scan element for %s", device_name);
@@ -334,7 +332,7 @@ int cmxd_setup_iio_buffer(struct iio_buffer *buf, const char *device_name) {
     }
     fclose(fp);
     
-    snprintf(path, sizeof(path), "/sys/bus/iio/devices/%s/scan_elements/in_timestamp_en", device_name);
+    snprintf(path, sizeof(path), IIO_SCAN_TIMESTAMP_EN_TEMPLATE, device_name);
     fp = fopen(path, "w");
     if (!fp || fprintf(fp, "1") < 0) {
         log_error("Failed to enable timestamp scan element for %s", device_name);
@@ -344,7 +342,7 @@ int cmxd_setup_iio_buffer(struct iio_buffer *buf, const char *device_name) {
     fclose(fp);
     
     /* Set current trigger */
-    snprintf(path, sizeof(path), "/sys/bus/iio/devices/%s/trigger/current_trigger", device_name);
+    snprintf(path, sizeof(path), IIO_TRIGGER_CURRENT_TEMPLATE, device_name);
     fp = fopen(path, "w");
     if (!fp || fprintf(fp, "%s", buf->trigger_name) < 0) {
         log_error("Failed to set trigger for %s", device_name);
@@ -354,7 +352,7 @@ int cmxd_setup_iio_buffer(struct iio_buffer *buf, const char *device_name) {
     fclose(fp);
     
     /* Enable buffer */
-    snprintf(path, sizeof(path), "/sys/bus/iio/devices/%s/buffer/enable", device_name);
+    snprintf(path, sizeof(path), IIO_BUFFER_ENABLE_TEMPLATE, device_name);
     fp = fopen(path, "w");
     if (!fp || fprintf(fp, "1") < 0) {
         log_error("Failed to enable buffer for %s", device_name);
@@ -364,15 +362,15 @@ int cmxd_setup_iio_buffer(struct iio_buffer *buf, const char *device_name) {
     fclose(fp);
     
     /* Open buffer for reading */
-    snprintf(path, sizeof(path), "/dev/%s", device_name);
+    snprintf(path, sizeof(path), IIO_DEV_CHAR_TEMPLATE, device_name);
     buf->buffer_fd = open(path, O_RDONLY | O_NONBLOCK);
     if (buf->buffer_fd < 0) {
         if (errno == ENOENT) {
             log_error("Device file %s does not exist", path);
             log_error("The chuwi-minibook-x kernel module may not be loaded or compiled into the kernel");
             log_error("Check if the module provides IIO devices:");
-            log_error("  ls -la /sys/bus/iio/devices/");
-            log_error("  ls -la /dev/iio:device*");
+            log_error("  ls -la %s", IIO_DEVICES_LIST_MSG);
+            log_error("  %s", IIO_DEV_LIST_CMD);
             log_error("If no devices exist, try loading the module: sudo modprobe chuwi-minibook-x");
         } else if (errno == EACCES) {
             log_error("Permission denied accessing %s", path);
@@ -437,7 +435,7 @@ void cmxd_cleanup_iio_buffer(struct iio_buffer *buf) {
     }
     
     /* Disable buffer */
-    snprintf(path, sizeof(path), "/sys/bus/iio/devices/%s/buffer/enable", buf->device_name);
+    snprintf(path, sizeof(path), IIO_BUFFER_ENABLE_TEMPLATE, buf->device_name);
     fp = fopen(path, "w");
     if (fp) {
         fprintf(fp, "0");
@@ -445,7 +443,7 @@ void cmxd_cleanup_iio_buffer(struct iio_buffer *buf) {
     }
     
     /* Clear trigger */
-    snprintf(path, sizeof(path), "/sys/bus/iio/devices/%s/trigger/current_trigger", buf->device_name);
+    snprintf(path, sizeof(path), IIO_TRIGGER_CURRENT_TEMPLATE, buf->device_name);
     fp = fopen(path, "w");
     if (fp) {
         fprintf(fp, "\n");
@@ -507,13 +505,13 @@ int cmxd_validate_paths(const char *base_dev, const char *lid_dev)
     }
     
     /* Check IIO devices */
-    snprintf(path, sizeof(path), "/sys/bus/iio/devices/%s", base_dev);
+    snprintf(path, sizeof(path), IIO_DEVICE_PATH_TEMPLATE, base_dev);
     if (stat(path, &st) < 0) {
         log_error("Base IIO device not found: %s", path);
         return -1;
     }
     
-    snprintf(path, sizeof(path), "/sys/bus/iio/devices/%s", lid_dev);
+    snprintf(path, sizeof(path), IIO_DEVICE_PATH_TEMPLATE, lid_dev);
     if (stat(path, &st) < 0) {
         log_error("Lid IIO device not found: %s", path);
         return -1;
