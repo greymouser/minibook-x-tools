@@ -26,26 +26,9 @@ config CMX
 	  - Mount matrix support for correct accelerometer orientation
 	  - Sysfs interface for runtime configuration and data input
 	  - Module parameters for hardware configuration
+
+	  The driver will need the supporting userspace daemon from:
+	    https://github.com/greymouser/minibook-x-tools
 	  
 	  Say Y or M here if you have a Chuwi Minibook X and want integrated
 	  hardware support with tablet mode detection.
-
-config CMX_DEBUGFS
-	bool "CMX debugging support"
-	depends on CMX && DEBUG_FS
-	help
-	  Enable debugfs interface for detailed inspection of driver state,
-	  hardware detection, and accelerometer data processing. This is useful
-	  for development and troubleshooting hardware detection issues.
-	  
-	  The debugfs interface provides:
-	  - Raw accelerometer vector data and device status
-	  - Hardware detection and I2C instantiation logs
-	  - Module configuration and runtime parameters
-	  - Detailed driver operation information
-	  
-	  This option adds minimal overhead and is safe to enable for debugging
-	  hardware detection or tablet mode detection issues.
-	  
-	  Say Y here if you need detailed debugging information for the
-	  CMX driver.

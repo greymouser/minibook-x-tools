@@ -1,0 +1,18 @@
+#
+# Kbuild for CMX - Chuwi Minibook X platform driver
+#
+# This file contains the kernel build configuration for the unified driver
+# that combines mount matrix support with complete tablet mode detection.
+#
+
+# Module definition - single unified module
+obj-m += cmx.o
+
+# Inject version from VERSION file
+VERSION_STRING := $(shell cat VERSION 2>/dev/null || echo "3.0")
+ccflags-y += -DMODULE_VERSION_STRING=\"$(VERSION_STRING)\"
+
+# Development compiler flags
+ccflags-y += -Wall -Wextra
+
+# The module is a single source file (cmx.c)
