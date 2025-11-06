@@ -90,11 +90,27 @@ Runtime configuration and monitoring at `/sys/kernel/chuwi-minibook-x/`:
 - `iio_base_device` (r) - IIO device name for base accelerometer
 - `iio_lid_device` (r) - IIO device name for lid accelerometer
 
+### Event Control
+- `enable` (rw) - Enable/disable tablet mode events: accepts `true`/`false`, `1`/`0`, `yes`/`no`, `y`/`n`, `t`/`f` (case-insensitive)
+
 ### Usage Examples
 ```bash
 # Check current state
 cat /sys/kernel/chuwi-minibook-x/mode
 cat /sys/kernel/chuwi-minibook-x/orientation
+
+# Check if events are enabled
+cat /sys/kernel/chuwi-minibook-x/enable
+
+# Disable tablet mode events (multiple formats accepted)
+echo "false" > /sys/kernel/chuwi-minibook-x/enable
+echo "0" > /sys/kernel/chuwi-minibook-x/enable
+echo "no" > /sys/kernel/chuwi-minibook-x/enable
+
+# Re-enable tablet mode events
+echo "true" > /sys/kernel/chuwi-minibook-x/enable
+echo "1" > /sys/kernel/chuwi-minibook-x/enable
+echo "yes" > /sys/kernel/chuwi-minibook-x/enable
 
 # Set accelerometer data manually (for testing)
 echo "0 0 1000000" > /sys/kernel/chuwi-minibook-x/base_vec
@@ -118,6 +134,27 @@ evtest /dev/input/by-path/*tablet*
 
 Events reported:
 - `SW_TABLET_MODE`: 0=laptop mode, 1=tablet mode
+
+### Event Control
+
+Tablet mode events can be enabled or disabled without unloading the module:
+
+```bash
+# Disable events (multiple formats supported)
+echo "false" > /sys/kernel/chuwi-minibook-x/enable
+echo "0" > /sys/kernel/chuwi-minibook-x/enable
+
+# Check current state (always shows "true" or "false")
+cat /sys/kernel/chuwi-minibook-x/enable
+
+# Re-enable events
+echo "true" > /sys/kernel/chuwi-minibook-x/enable
+```
+
+When disabled:
+- Mode changes are still tracked internally
+- No `SW_TABLET_MODE` events are sent to the system
+- Useful for preventing unwanted mode switches during specific tasks
 
 ## Hardware Support
 
@@ -219,6 +256,9 @@ This module provides **infrastructure only**:
 - ❌ Automatic angle calculations
 - ❌ Automatic tablet mode switching
 
+See the cooperating daemon that handles the angle detection, mode changes, and
+orientation changes.
+
 ### Required External Logic
 To implement full tablet mode detection, external software must:
 
@@ -250,10 +290,12 @@ echo "$lid_x $lid_y $lid_z" > /sys/kernel/chuwi-minibook-x/lid_vec
 
 ## Files
 
-- `chuwi-minibook-x.c` - Main module implementation (981 lines)
+- `chuwi-minibook-x.c` - Main module implementation
 - `chuwi-minibook-x.h` - Header with structure definitions
 - `Makefile` - Build configuration
 - `Kconfig` - Kernel configuration options
+- `test-enable-sysfs.sh` - Test script for enable sysfs attribute
+- `ENABLE_SYSFS_IMPLEMENTATION.md` - Detailed enable feature documentation
 
 ## License
 
