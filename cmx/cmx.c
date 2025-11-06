@@ -50,7 +50,6 @@ MODULE_ALIAS("platform:" CMX_DRIVER_NAME);
 
 /* Module dependencies - ensure required drivers are loaded */
 MODULE_SOFTDEP("pre: mxc4005");
-MODULE_SOFTDEP("pre: serial_multi_instantiate");
 
 /* Module parameters for hardware configuration */
 bool enable_mount_matrix = true;
