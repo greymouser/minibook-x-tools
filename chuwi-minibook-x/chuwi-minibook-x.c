@@ -127,6 +127,9 @@ static char current_mode[16] = "laptop";
 /** @current_orientation: Current device orientation string */
 static char current_orientation[32] = "portrait";
 
+/** @enable_events: Control whether tablet mode events are generated (default: true) */
+static bool enable_events = true;
+
 /* Global driver context and device tracking */
 static struct chuwi_minibook_x *g_chip;
 
@@ -200,11 +203,18 @@ static void chuwi_minibook_x_store_iio_device_assignment(struct i2c_client *clie
  * @is_tablet: true if entering tablet mode, false if exiting
  *
  * Sends input event to notify desktop environments of tablet mode state changes.
+ * Only sends events if enable_events is true.
  */
 static void notify_tablet_mode_change(bool is_tablet)
 {
 	if (!tm_input) {
 		pr_debug(DRV_NAME ": Input device not available for tablet mode notification\n");
+		return;
+	}
+	
+	/* Check if events are enabled */
+	if (!enable_events) {
+		pr_debug(DRV_NAME ": Tablet mode events disabled, skipping notification\n");
 		return;
 	}
 	
@@ -388,6 +398,79 @@ static ssize_t show_iio_lid_device(struct kobject *kobj, struct kobj_attribute *
 	return snprintf(buf, PAGE_SIZE, "%s\n", g_chip->lid_iio_device);
 }
 
+/**
+ * show_enable - Show whether tablet mode events are enabled
+ */
+static ssize_t show_enable(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
+{
+	return snprintf(buf, PAGE_SIZE, "%s\n", enable_events ? "true" : "false");
+}
+
+/**
+ * store_enable - Enable or disable tablet mode events
+ * @kobj: kobject for sysfs attribute
+ * @attr: sysfs attribute
+ * @buf: input buffer containing enable/disable value
+ * @len: length of input buffer
+ *
+ * Controls whether SW_TABLET_MODE events are generated when mode changes occur.
+ * When disabled, mode changes are still tracked but no input events are sent.
+ * 
+ * Accepts: true values: 1,y,yes,t,true  false values: 0,n,no,f,false
+ * Always shows "true" or "false" when read.
+ */
+static ssize_t store_enable(struct kobject *kobj, struct kobj_attribute *attr, const char *buf, size_t len)
+{
+	char enable_str[8];
+	bool new_value;
+	
+	if (len >= sizeof(enable_str))
+		return -EINVAL;
+	
+	/* Copy and null-terminate the input */
+	strncpy(enable_str, buf, len);
+	enable_str[len] = '\0';
+	
+	/* Remove trailing newline if present */
+	if (len > 0 && enable_str[len - 1] == '\n')
+		enable_str[len - 1] = '\0';
+	
+	/* Convert to lowercase for case-insensitive comparison */
+	{
+		int i;
+		for (i = 0; enable_str[i]; i++) {
+			if (enable_str[i] >= 'A' && enable_str[i] <= 'Z')
+				enable_str[i] = enable_str[i] + ('a' - 'A');
+		}
+	}
+	
+	/* Parse true values: 1,y,yes,t,true */
+	if (strcmp(enable_str, "1") == 0 ||
+	    strcmp(enable_str, "y") == 0 ||
+	    strcmp(enable_str, "yes") == 0 ||
+	    strcmp(enable_str, "t") == 0 ||
+	    strcmp(enable_str, "true") == 0) {
+		new_value = true;
+	}
+	/* Parse false values: 0,n,no,f,false */
+	else if (strcmp(enable_str, "0") == 0 ||
+		 strcmp(enable_str, "n") == 0 ||
+		 strcmp(enable_str, "no") == 0 ||
+		 strcmp(enable_str, "f") == 0 ||
+		 strcmp(enable_str, "false") == 0) {
+		new_value = false;
+	}
+	else {
+		return -EINVAL;
+	}
+	
+	/* Update the state */
+	enable_events = new_value;
+	pr_info(DRV_NAME ": Tablet mode events %s\n", new_value ? "enabled" : "disabled");
+	
+	return len;
+}
+
 /* Basic attribute definitions */
 static struct kobj_attribute base_vec_attr = __ATTR(base_vec, 0644, show_base_vec, store_base_vec);
 static struct kobj_attribute lid_vec_attr = __ATTR(lid_vec, 0644, show_lid_vec, store_lid_vec);
@@ -395,6 +478,7 @@ static struct kobj_attribute mode_attr = __ATTR(mode, 0644, show_mode, store_mod
 static struct kobj_attribute orientation_attr = __ATTR(orientation, 0644, show_orientation, store_orientation);
 static struct kobj_attribute iio_base_device_attr = __ATTR(iio_base_device, 0444, show_iio_base_device, NULL);
 static struct kobj_attribute iio_lid_device_attr = __ATTR(iio_lid_device, 0444, show_iio_lid_device, NULL);
+static struct kobj_attribute enable_attr = __ATTR(enable, 0644, show_enable, store_enable);
 
 static struct attribute *tablet_mode_attrs[] = {
 	&base_vec_attr.attr,
@@ -403,6 +487,7 @@ static struct attribute *tablet_mode_attrs[] = {
 	&orientation_attr.attr,
 	&iio_base_device_attr.attr,
 	&iio_lid_device_attr.attr,
+	&enable_attr.attr,
 	NULL,
 };
 
