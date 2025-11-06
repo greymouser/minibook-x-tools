@@ -75,7 +75,7 @@ The daemon can be configured via a configuration file with key=value pairs. Comm
 .SS Configuration Options
 .TP
 .B tablet_device
-Path to the tablet mode input device (default: /dev/input/event20)
+Path to the tablet mode input device (default: auto-detect)
 
 .TP
 .B on_tablet_script
@@ -97,7 +97,7 @@ Enable verbose logging (0=disabled, 1=enabled)
 .nf
 # ~/.config/tablet-mode/daemon.conf (user config)
 # /etc/tablet-mode/daemon.conf (system config)
-tablet_device=/dev/input/event20
+tablet_device=/dev/input/event21
 on_tablet_script=onboard &
 on_laptop_script=pkill onboard
 debounce_ms=500
@@ -135,7 +135,7 @@ To find the correct tablet mode device:
 .B cat /proc/bus/input/devices | grep -i tablet
 .fi
 
-The device typically appears as "Chuwi Minibook X Tablet Mode" or similar.
+The device typically appears as "Chuwi Minibook X input" or similar.
 
 .SH VIRTUAL KEYBOARDS
 The daemon supports integration with several virtual keyboards:
@@ -200,7 +200,7 @@ Check available input devices:
 
 Verify the tablet mode kernel module is loaded:
 .nf
-.B lsmod | grep chuwi
+.B lsmod | grep cmx
 .B dmesg | grep tablet
 .fi
 
@@ -247,7 +247,7 @@ Run daemon in foreground with verbose output:
 Use specific device and scripts:
 .nf
 .B tablet-mode-daemon \\
-    -d /dev/input/event21 \\
+    -d /dev/input/event22 \\
     -t 'onboard &' \\
     -l 'pkill onboard'
 .fi

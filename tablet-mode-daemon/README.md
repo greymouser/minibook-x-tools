@@ -257,8 +257,8 @@ systemctl --user stop tablet-mode-daemon
 tablet-mode-daemon -f -v
 
 # In another terminal, test mode switching
-echo 1 | sudo tee /sys/kernel/chuwi-minibook-x-tablet-mode/force
-echo 0 | sudo tee /sys/kernel/chuwi-minibook-x-tablet-mode/force
+echo tablet | sudo tee /sys/devices/platform/cmx/mode
+echo laptop | sudo tee /sys/devices/platform/cmx/mode
 ```
 
 ## Integration with Other Desktop Environments
@@ -290,8 +290,8 @@ on_laptop_script=swaymsg gaps inner all set 10; pkill onboard
 - Hyprland window manager (for built-in optimizations)
 
 For the Chuwi Minibook X, ensure you have:
-- The chuwi-minibook-x-tablet-mode kernel module loaded
-- The userspace feeder daemon running
+- The cmx kernel module loaded
+- The cmxd userspace daemon running
 - Accelerometer devices properly configured
 
 ## Security
@@ -343,9 +343,8 @@ make dist
 
 This tablet mode integration works with other components in the minibook-x-tools project:
 
-- **accelerometers/**: IIO device detection and setup
-- **module-v1/module/**: Kernel module for SW_TABLET_MODE generation  
-- **module-v1/module-userspace/**: Userspace feeder for accelerometer data
+- **cmx/**: Kernel module for SW_TABLET_MODE generation and hardware support
+- **cmxd/**: Userspace daemon for accelerometer data processing
 
 ## License
 
