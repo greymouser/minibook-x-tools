@@ -406,11 +406,11 @@ int cmxd_setup_iio_buffer(struct iio_buffer *buf, const char *device_name) {
     if (buf->buffer_fd < 0) {
         if (errno == ENOENT) {
             log_error("Device file %s does not exist", path);
-            log_error("The chuwi-minibook-x kernel module may not be loaded or compiled into the kernel");
+            log_error("The cmx kernel module may not be loaded or compiled into the kernel");
             log_error("Check if the module provides IIO devices:");
             log_error("  ls -la %s", IIO_DEVICES_LIST_MSG);
             log_error("  %s", IIO_DEV_LIST_CMD);
-            log_error("If no devices exist, try loading the module: sudo modprobe chuwi-minibook-x");
+            log_error("If no devices exist, try loading the module: sudo modprobe cmx");
         } else if (errno == EACCES) {
             log_error("Permission denied accessing %s", path);
             log_error("Try running as root or check device permissions");

@@ -47,7 +47,7 @@
 #endif
 
 #define PROGRAM_NAME "cmxd"
-#define VERSION "2.0"
+/* VERSION is defined by Makefile from VERSION file */
 
 #define DEVICE_NAME_MAX 128
 
@@ -600,9 +600,9 @@ int main(int argc, char **argv)
 #pragma GCC diagnostic pop
     if (cmxd_wait_for_path(sysfs_path, 2) < 0) {
         log_error("Kernel module sysfs interface not found: %s", cfg.sysfs_path);
-        log_error("The chuwi-minibook-x kernel module does not appear to be loaded");
-        log_error("To load the module: sudo modprobe chuwi-minibook-x");
-        log_error("Or check if the module is available: modinfo chuwi-minibook-x");
+        log_error("The cmx kernel module does not appear to be loaded");
+        log_error("To load the module: sudo modprobe cmx");
+        log_error("Or check if the module is available: modinfo cmx");
         return 1;
     }
     

@@ -14,7 +14,7 @@
 #define CMXD_DEFAULT_CONFIG_FILE        "/etc/default/cmxd"
 
 /* Default kernel module sysfs path */
-#define CMXD_DEFAULT_SYSFS_PATH         "/sys/devices/platform/chuwi-minibook-x"
+#define CMXD_DEFAULT_SYSFS_PATH         "/sys/devices/platform/cmx"
 
 /* IIO subsystem base paths */
 #define IIO_BASE_PATH                   "/sys/bus/iio"

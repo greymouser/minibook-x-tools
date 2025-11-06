@@ -5,7 +5,7 @@
 
 # Program information
 PROGRAM_NAME := cmxd
-VERSION := 2.0
+VERSION := $(shell cat VERSION 2>/dev/null || echo "3.0")
 
 # Build configuration
 CC ?= gcc
@@ -63,19 +63,13 @@ install: $(TARGET)
 	install -m 755 $(TARGET) $(DESTDIR)$(BINDIR)/
 	install -d $(DESTDIR)$(SYSCONFDIR)/default
 	install -m 644 $(PROGRAM_NAME).conf $(DESTDIR)$(SYSCONFDIR)/default/$(PROGRAM_NAME)
+	install -d $(DESTDIR)$(SYSTEMDDIR)
+	install -m 644 $(PROGRAM_NAME).service $(DESTDIR)$(SYSTEMDDIR)/
 
 # Uninstall the program and supporting files
 uninstall:
 	rm -f $(DESTDIR)$(BINDIR)/$(TARGET)
 	rm -f $(DESTDIR)$(SYSCONFDIR)/default/$(PROGRAM_NAME)
-
-# Install systemd service (optional)
-install-systemd: install
-	install -d $(DESTDIR)$(SYSTEMDDIR)
-	install -m 644 $(PROGRAM_NAME).service $(DESTDIR)$(SYSTEMDDIR)/
-
-# Uninstall systemd service
-uninstall-systemd:
 	rm -f $(DESTDIR)$(SYSTEMDDIR)/$(PROGRAM_NAME).service
 
 # Test build (syntax check only)

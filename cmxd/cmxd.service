@@ -36,7 +36,7 @@ SystemCallErrorNumber=EPERM
 
 # Allow access to IIO sysfs and our kernel module sysfs
 ReadOnlyPaths=/sys/bus/iio
-ReadWritePaths=/sys/devices/platform/chuwi-minibook-x
+ReadWritePaths=/sys/devices/platform/cmx
 
 [Install]
 WantedBy=multi-user.target
