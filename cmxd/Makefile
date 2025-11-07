@@ -12,7 +12,7 @@ CC ?= gcc
 CFLAGS := -std=gnu11 -Wall -Wextra -O2 -g
 CPPFLAGS := -D_GNU_SOURCE -DVERSION=\"$(VERSION)\"
 LDFLAGS := 
-LIBS := -lm
+LIBS := -lm -lpthread
 
 # Installation paths
 PREFIX ?= /usr
@@ -23,7 +23,7 @@ SYSTEMDDIR := $(PREFIX)/lib/systemd/system
 MANDIR := $(PREFIX)/share/man
 
 # Source files
-SOURCES := $(PROGRAM_NAME).c cmxd-calculations.c cmxd-orientation.c cmxd-modes.c cmxd-data.c
+SOURCES := $(PROGRAM_NAME).c cmxd-calculations.c cmxd-orientation.c cmxd-modes.c cmxd-data.c cmxd-events.c
 OBJECTS := $(SOURCES:.c=.o)
 TARGET := $(PROGRAM_NAME)
 MANPAGES := $(PROGRAM_NAME).8
@@ -65,6 +65,8 @@ install: $(TARGET)
 	install -m 644 $(PROGRAM_NAME).conf $(DESTDIR)$(SYSCONFDIR)/default/$(PROGRAM_NAME)
 	install -d $(DESTDIR)$(SYSTEMDDIR)
 	install -m 644 $(PROGRAM_NAME).service $(DESTDIR)$(SYSTEMDDIR)/
+	# Create runtime directory for Unix domain sockets
+	install -d $(DESTDIR)/run/cmxd -m 755
 
 # Uninstall the program and supporting files
 uninstall:

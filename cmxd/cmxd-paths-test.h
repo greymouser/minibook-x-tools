@@ -1,8 +1,8 @@
 /* SPDX-License-Identifier: GPL-2.0 */
 /*
- * System paths and constants for CMXD (Chuwi Minibook X Daemon)
+ * Test paths and constants for CMXD (Chuwi Minibook X Daemon)
  * 
- * Centralized location for all system paths used throughout the application
+ * Test version that uses /tmp instead of /run for development testing
  * 
  * Copyright (c) 2025 Armando DiCianno <armando@noonshy.com>
  */
@@ -13,12 +13,12 @@
 /* Configuration file paths */
 #define CMXD_DEFAULT_CONFIG_FILE        "/etc/default/cmxd"
 
-/* Unix domain socket paths */
-#define CMXD_RUNTIME_DIR                "/run/cmxd"
+/* Unix domain socket paths - using /tmp for testing */
+#define CMXD_RUNTIME_DIR                "/tmp/cmxd"
 #define CMXD_SOCKET_PATH                CMXD_RUNTIME_DIR "/events.sock"
 
-/* Default kernel module sysfs path */
-#define CMXD_DEFAULT_SYSFS_PATH         "/sys/devices/platform/cmx"
+/* Default kernel module sysfs path - using /tmp for testing */
+#define CMXD_DEFAULT_SYSFS_PATH         "/tmp/cmxd"
 
 /* IIO subsystem base paths */
 #define IIO_BASE_PATH                   "/sys/bus/iio"
@@ -49,24 +49,23 @@
 #define IIO_SCAN_ACCEL_Z_INDEX_TEMPLATE IIO_DEVICES_PATH "/%s/scan_elements/in_accel_z_index"
 #define IIO_SCAN_TIMESTAMP_INDEX_TEMPLATE IIO_DEVICES_PATH "/%s/scan_elements/in_timestamp_index"
 
+/* IIO buffer management */
+#define IIO_BUFFER_ENABLE_TEMPLATE      IIO_DEVICES_PATH "/%s/buffer/enable"
+#define IIO_BUFFER_LENGTH_TEMPLATE      IIO_DEVICES_PATH "/%s/buffer/length"
+
+/* IIO scan enable templates */
 #define IIO_SCAN_ACCEL_X_EN_TEMPLATE    IIO_DEVICES_PATH "/%s/scan_elements/in_accel_x_en"
 #define IIO_SCAN_ACCEL_Y_EN_TEMPLATE    IIO_DEVICES_PATH "/%s/scan_elements/in_accel_y_en"
 #define IIO_SCAN_ACCEL_Z_EN_TEMPLATE    IIO_DEVICES_PATH "/%s/scan_elements/in_accel_z_en"
 #define IIO_SCAN_TIMESTAMP_EN_TEMPLATE  IIO_DEVICES_PATH "/%s/scan_elements/in_timestamp_en"
 
-/* IIO buffer and trigger path templates */
-#define IIO_TRIGGER_CURRENT_TEMPLATE    IIO_DEVICES_PATH "/%s/trigger/current_trigger"
-#define IIO_BUFFER_ENABLE_TEMPLATE      IIO_DEVICES_PATH "/%s/buffer/enable"
+/* Default configuration values */
+#define CMXD_DEFAULT_TIMEOUT_MS         100
+#define CMXD_DEFAULT_BUFFER_LENGTH      64
+#define CMXD_DEFAULT_POLL_INTERVAL_MS   50
 
-/* Specific trigger paths */
-#define IIO_TRIGGER0_PATH               IIO_DEVICES_PATH "/trigger0"
-
-/* Diagnostic command templates */
-#define IIO_DEVICES_LIST_CMD            "ls -la " IIO_DEVICES_PATH "/ 2>/dev/null | head -10"
-#define IIO_DEV_LIST_CMD                "ls -la " IIO_DEV_BASE_PATH "/iio:device*"
-
-/* Message strings for error reporting */
-#define IIO_DEVICES_LIST_MSG            IIO_DEVICES_PATH "/"
-#define IIO_DEV_CHAR_MSG                IIO_DEV_BASE_PATH "/iio:device*"
+/* Error handling constants */
+#define CMXD_MAX_RETRY_COUNT           3
+#define CMXD_RETRY_DELAY_MS           1000
 
 #endif /* CMXD_PATHS_H */

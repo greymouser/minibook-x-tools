@@ -36,6 +36,7 @@
 #include "cmxd-orientation.h"
 #include "cmxd-modes.h"
 #include "cmxd-data.h"
+#include "cmxd-events.h"
 #include "cmxd-paths.h"
 
 #ifndef M_PI
@@ -65,6 +66,10 @@ struct config {
     unsigned int buffer_timeout_ms;
     int verbose;
     int daemon_mode;
+    /* Event system configuration */
+    int enable_unix_socket;
+    int enable_dbus;
+    char unix_socket_path[256];
 };
 
 /* Global state */
@@ -76,7 +81,10 @@ static struct config cfg = {
     .buffer_timeout_ms = 100,
     .daemon_mode = 0,
     .verbose = 0,
-    .sysfs_path = CMXD_DEFAULT_SYSFS_PATH
+    .sysfs_path = CMXD_DEFAULT_SYSFS_PATH,
+    .enable_unix_socket = 1,  /* Enable Unix domain socket by default */
+    .enable_dbus = 1,         /* Enable DBus by default */
+    .unix_socket_path = CMXD_SOCKET_PATH
 };
 
 /*
@@ -176,6 +184,9 @@ static void cleanup_and_exit(void)
     if (cmxd_write_orientation("landscape") < 0) {
         log_warn("Failed to restore landscape orientation during cleanup");
     }
+    
+    /* Cleanup event system */
+    cmxd_events_cleanup();
     
     log_info("Cleanup complete - laptop mode restored");
 }
@@ -370,13 +381,13 @@ static int run_main_loop(void)
                     base_sample.x, base_sample.y, base_sample.z,
                     lid_sample.x, lid_sample.y, lid_sample.z, hinge_angle, tilt_angle, device_mode, orientation);
             
-            /* Write detected mode to kernel module */
-            if (cmxd_write_mode(device_mode) < 0) {
+            /* Write detected mode to kernel module and send events */
+            if (cmxd_write_mode_with_events(device_mode) < 0) {
                 log_warn("Failed to write mode to kernel module");
             }
             
-            /* Write detected orientation to kernel module */
-            if (cmxd_write_orientation(orientation) < 0) {
+            /* Write detected orientation to kernel module and send events */
+            if (cmxd_write_orientation_with_events(orientation) < 0) {
                 log_warn("Failed to write orientation to kernel module");
             }
             
@@ -613,6 +624,21 @@ int main(int argc, char **argv)
     snprintf(data_cfg.sysfs_path, sizeof(data_cfg.sysfs_path), "%s", cfg.sysfs_path);
     cmxd_data_init(&data_cfg, log_msg);
     log_debug("Data module initialized");
+    
+    /* Initialize event system */
+    struct cmxd_events_config events_cfg = {
+        .enable_unix_socket = cfg.enable_unix_socket,
+        .enable_dbus = cfg.enable_dbus,
+        .verbose = cfg.verbose
+    };
+    snprintf(events_cfg.unix_socket_path, sizeof(events_cfg.unix_socket_path), 
+             "%s", cfg.unix_socket_path);
+    
+    if (cmxd_events_init(&events_cfg, log_msg) < 0) {
+        log_error("Failed to initialize event system");
+        return 1;
+    }
+    log_debug("Event system initialized");
     
     /* Read device assignments from kernel module - REQUIRED */
     if (cmxd_read_kernel_device_assignments(cfg.base_dev, sizeof(cfg.base_dev), 
