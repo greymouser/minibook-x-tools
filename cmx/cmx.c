@@ -566,8 +566,15 @@ static int cmx_apply_mount_matrix_to_existing(struct i2c_client *client, bool is
 	int ret;
 	
 	if (!client || !enable_mount_matrix) {
+		pr_debug(DRV_NAME ": Mount matrix application skipped for i2c-%d:0x%02x (client=%p, enable=%s)\n",
+			 client ? client->adapter->nr : -1, 
+			 client ? client->addr : 0,
+			 client, enable_mount_matrix ? "true" : "false");
 		return 0;
 	}
+	
+	pr_info(DRV_NAME ": Applying %s mount matrix to existing device i2c-%d:0x%02x\n",
+		is_lid ? "lid" : "base", client->adapter->nr, client->addr);
 	
 	/* Create a unique software node to avoid sysfs conflicts across reloads */
 	unique_node = cmx_create_unique_software_node(is_lid);
@@ -594,6 +601,9 @@ static int cmx_apply_mount_matrix_to_existing(struct i2c_client *client, bool is
 		cmx_free_software_node(unique_node);
 		return ret;
 	}
+	
+	pr_info(DRV_NAME ": Successfully applied %s mount matrix to existing device i2c-%d:0x%02x\n",
+		is_lid ? "lid" : "base", client->adapter->nr, client->addr);
 	
 	/* Store the node for cleanup and track the client */
 	if (is_lid) {
@@ -1195,13 +1205,13 @@ static int cmx_setup_accelerometers(void)
 			}
 		}
 		
-		/* Assign: higher bus number = lid, lower bus number = base */
+		/* Assign: higher bus number = lid, lower bus number = base (final correction based on gravity analysis) */
 		base_device.bus_nr = discovered_devices[0].bus_nr;  /* Lower bus number */
 		base_device.addr = discovered_devices[0].addr;
 		lid_device.bus_nr = discovered_devices[discovered_device_count - 1].bus_nr;  /* Higher bus number */
 		lid_device.addr = discovered_devices[discovered_device_count - 1].addr;
 		
-		pr_debug(DRV_NAME ": Device assignment: lid=i2c-%d:0x%02x (higher bus), base=i2c-%d:0x%02x (lower bus)\n",
+		pr_info(DRV_NAME ": Device assignment: lid=i2c-%d:0x%02x (higher bus), base=i2c-%d:0x%02x (lower bus)\n",
 			lid_device.bus_nr, lid_device.addr, base_device.bus_nr, base_device.addr);
 	}
 	
@@ -1209,7 +1219,7 @@ static int cmx_setup_accelerometers(void)
 	if (lid_device.bus_nr >= 0) {
 		lid_device.existing_client = cmx_find_device_on_bus(lid_device.bus_nr, lid_device.addr);
 		if (lid_device.existing_client) {
-			pr_debug(DRV_NAME ": Found existing MXC4005 device for lid on i2c-%d:0x%02x\n", 
+			pr_info(DRV_NAME ": Found existing MXC4005 device for lid on i2c-%d:0x%02x, applying mount matrix\n", 
 				lid_device.bus_nr, lid_device.addr);
 			ret = cmx_apply_mount_matrix_to_existing(lid_device.existing_client, true);
 			if (ret == 0) {
@@ -1222,7 +1232,7 @@ static int cmx_setup_accelerometers(void)
 	if (base_device.bus_nr >= 0) {
 		base_device.existing_client = cmx_find_device_on_bus(base_device.bus_nr, base_device.addr);
 		if (base_device.existing_client) {
-			pr_debug(DRV_NAME ": Found existing MXC4005 device for base on i2c-%d:0x%02x\n", 
+			pr_info(DRV_NAME ": Found existing MXC4005 device for base on i2c-%d:0x%02x, applying mount matrix\n", 
 				base_device.bus_nr, base_device.addr);
 			ret = cmx_apply_mount_matrix_to_existing(base_device.existing_client, false);
 			if (ret == 0) {
