@@ -38,6 +38,7 @@
 #include "cmxd-data.h"
 #include "cmxd-events.h"
 #include "cmxd-paths.h"
+#include "cmxd-protocol.h"
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -176,12 +177,12 @@ static void cleanup_and_exit(void)
     log_info("Performing cleanup: forcing laptop mode to prevent lockout");
     
     /* Force laptop mode as failsafe */
-    if (cmxd_write_mode("laptop") < 0) {
+    if (cmxd_write_mode(CMXD_PROTOCOL_MODE_LAPTOP) < 0) {
         log_warn("Failed to restore laptop mode during cleanup");
     }
     
     /* Force landscape orientation as safe default */
-    if (cmxd_write_orientation("landscape") < 0) {
+    if (cmxd_write_orientation(CMXD_PROTOCOL_ORIENTATION_LANDSCAPE) < 0) {
         log_warn("Failed to restore landscape orientation during cleanup");
     }
     
@@ -392,7 +393,7 @@ static int run_main_loop(void)
             double tilt_angle = cmxd_calculate_tilt_angle(lid_sample.x, lid_sample.y, lid_sample.z);
             
             /* Detect device mode using stable mode detection */
-            const char* device_mode = "laptop";  /* Default fallback */
+            const char* device_mode = CMXD_PROTOCOL_MODE_LAPTOP;  /* Default fallback */
             int orientation_code = 0;
             if (hinge_angle >= 0) {
                 /* Get orientation code for mode detection */

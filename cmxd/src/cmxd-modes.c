@@ -9,6 +9,7 @@
  */
 
 #include "cmxd-modes.h"
+#include "cmxd-protocol.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -40,7 +41,7 @@ const int CMXD_MODE_STABILITY_SAMPLES = 3;
 const int CMXD_ORIENTATION_FREEZE_DURATION = 0;
 
 /* Module state */
-static const char* current_mode = CMXD_MODE_LAPTOP;
+static const char* current_mode = CMXD_PROTOCOL_MODE_LAPTOP;
 static const char* candidate_mode = NULL;
 static int stability_count = 0;
 static bool verbose_logging = false;
@@ -67,7 +68,7 @@ static void debug_log(const char *fmt, ...)
 
 void cmxd_modes_init(void)
 {
-    current_mode = CMXD_MODE_LAPTOP;
+    current_mode = CMXD_PROTOCOL_MODE_LAPTOP;
     candidate_mode = NULL;
     stability_count = 0;
     verbose_logging = false;
@@ -82,21 +83,21 @@ void cmxd_modes_reset(void)
 const char* cmxd_get_device_mode(double angle, const char* current_mode_param)
 {
     if (angle < 0) {
-        return CMXD_MODE_LAPTOP;  /* Default for invalid readings */
+        return CMXD_PROTOCOL_MODE_LAPTOP;  /* Default for invalid readings */
     }
     
     /* Determine base mode from angle */
     const char* new_mode;
     if (angle < CMXD_MODE_CLOSING_MAX) {
-        new_mode = CMXD_MODE_CLOSING;
+        new_mode = CMXD_PROTOCOL_MODE_CLOSING;
     } else if (angle < CMXD_MODE_LAPTOP_MAX) {
-        new_mode = CMXD_MODE_LAPTOP;
+        new_mode = CMXD_PROTOCOL_MODE_LAPTOP;
     } else if (angle < CMXD_MODE_FLAT_MAX) {
-        new_mode = CMXD_MODE_FLAT;
+        new_mode = CMXD_PROTOCOL_MODE_FLAT;
     } else if (angle < CMXD_MODE_TENT_MAX) {
-        new_mode = CMXD_MODE_TENT;
+        new_mode = CMXD_PROTOCOL_MODE_TENT;
     } else {
-        new_mode = CMXD_MODE_TABLET;
+        new_mode = CMXD_PROTOCOL_MODE_TABLET;
     }
     
     /* Apply simple hysteresis if we have a current mode */
@@ -106,19 +107,19 @@ const char* cmxd_get_device_mode(double angle, const char* current_mode_param)
         /* Check if we need hysteresis to prevent mode flipping */
         if (strcmp(current_mode_param, new_mode) != 0) {
             /* Mode would change - check if we're near a boundary */
-            if ((strcmp(new_mode, CMXD_MODE_LAPTOP) == 0 && strcmp(current_mode_param, CMXD_MODE_CLOSING) == 0)) {
+            if ((strcmp(new_mode, CMXD_PROTOCOL_MODE_LAPTOP) == 0 && strcmp(current_mode_param, CMXD_PROTOCOL_MODE_CLOSING) == 0)) {
                 if (angle < CMXD_MODE_CLOSING_MAX + hysteresis) {
                     new_mode = current_mode_param;  /* Stay in current mode */
                 }
-            } else if ((strcmp(new_mode, CMXD_MODE_FLAT) == 0 && strcmp(current_mode_param, CMXD_MODE_LAPTOP) == 0)) {
+            } else if ((strcmp(new_mode, CMXD_PROTOCOL_MODE_FLAT) == 0 && strcmp(current_mode_param, CMXD_PROTOCOL_MODE_LAPTOP) == 0)) {
                 if (angle < CMXD_MODE_LAPTOP_MAX + hysteresis) {
                     new_mode = current_mode_param;
                 }
-            } else if ((strcmp(new_mode, CMXD_MODE_TENT) == 0 && strcmp(current_mode_param, CMXD_MODE_FLAT) == 0)) {
+            } else if ((strcmp(new_mode, CMXD_PROTOCOL_MODE_TENT) == 0 && strcmp(current_mode_param, CMXD_PROTOCOL_MODE_FLAT) == 0)) {
                 if (angle < CMXD_MODE_FLAT_MAX + hysteresis) {
                     new_mode = current_mode_param;
                 }
-            } else if ((strcmp(new_mode, CMXD_MODE_TABLET) == 0 && strcmp(current_mode_param, CMXD_MODE_TENT) == 0)) {
+            } else if ((strcmp(new_mode, CMXD_PROTOCOL_MODE_TABLET) == 0 && strcmp(current_mode_param, CMXD_PROTOCOL_MODE_TENT) == 0)) {
                 if (angle < CMXD_MODE_TENT_MAX + hysteresis) {
                     new_mode = current_mode_param;
                 }
@@ -172,7 +173,7 @@ const char* cmxd_get_stable_device_mode(double angle, int orientation)
 /* Check if mode has changed from last reading */
 bool cmxd_mode_has_changed(const char* mode)
 {
-    static const char* last_reported_mode = CMXD_MODE_LAPTOP;
+    static const char* last_reported_mode = CMXD_PROTOCOL_MODE_LAPTOP;
     
     bool changed = (strcmp(mode, last_reported_mode) != 0);
     if (changed) {
@@ -194,7 +195,7 @@ bool cmxd_is_tablet_mode(const char* mode)
     if (mode == NULL) {
         return false;
     }
-    return (strcmp(mode, CMXD_MODE_TABLET) == 0 || strcmp(mode, CMXD_MODE_TENT) == 0);
+    return (strcmp(mode, CMXD_PROTOCOL_MODE_TABLET) == 0 || strcmp(mode, CMXD_PROTOCOL_MODE_TENT) == 0);
 }
 
 void cmxd_modes_set_verbose(bool verbose)

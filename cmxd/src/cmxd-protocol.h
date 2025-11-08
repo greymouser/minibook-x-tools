@@ -46,6 +46,7 @@
 #define CMXD_PROTOCOL_MODE_FLAT "flat" 
 #define CMXD_PROTOCOL_MODE_TENT "tent"
 #define CMXD_PROTOCOL_MODE_TABLET "tablet"
+#define CMXD_PROTOCOL_MODE_CLOSING "closing"
 
 /**
  * Orientation values - portrait, portrait-flipped, landscape, landscape-flipped

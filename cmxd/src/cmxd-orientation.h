@@ -27,13 +27,6 @@ typedef enum {
     CMXD_DEVICE_Z_DOWN = 5   /* Z-axis pointing down (upside down) */
 } cmxd_device_orientation_t;
 
-/* Standard platform orientation strings */
-#define CMXD_ORIENTATION_LANDSCAPE "landscape"
-#define CMXD_ORIENTATION_LANDSCAPE_FLIPPED "landscape-flipped"
-#define CMXD_ORIENTATION_PORTRAIT "portrait"
-#define CMXD_ORIENTATION_PORTRAIT_FLIPPED "portrait-flipped"
-
-/* Module initialization */
 void cmxd_orientation_init(void);
 
 /* Core orientation detection functions */

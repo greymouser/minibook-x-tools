@@ -12,13 +12,7 @@
 #define CMXD_MODES_H
 
 #include <stdbool.h>
-
-/* Device mode constants */
-#define CMXD_MODE_CLOSING "closing"
-#define CMXD_MODE_LAPTOP "laptop"
-#define CMXD_MODE_FLAT "flat"
-#define CMXD_MODE_TENT "tent"
-#define CMXD_MODE_TABLET "tablet"
+#include "cmxd-protocol.h"  /* For mode constants */
 
 #define CMXD_MODE_UNKNOWN -1
 
