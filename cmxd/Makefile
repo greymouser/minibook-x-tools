@@ -23,12 +23,14 @@ SYSTEMDDIR := $(PREFIX)/lib/systemd/system
 MANDIR := $(PREFIX)/share/man
 
 # Source files
-SOURCES := $(PROGRAM_NAME).c cmxd-calculations.c cmxd-orientation.c cmxd-modes.c cmxd-data.c cmxd-events.c
+SRCDIR := src
+SOURCES := $(SRCDIR)/$(PROGRAM_NAME).c $(SRCDIR)/cmxd-calculations.c $(SRCDIR)/cmxd-orientation.c $(SRCDIR)/cmxd-modes.c $(SRCDIR)/cmxd-data.c $(SRCDIR)/cmxd-events.c
 OBJECTS := $(SOURCES:.c=.o)
 TARGET := $(PROGRAM_NAME)
 MANPAGES := $(PROGRAM_NAME).8
 DOCFILES := README.md
-CONFIGFILES := $(PROGRAM_NAME).conf
+CONFIGFILES := support/$(PROGRAM_NAME).conf
+SERVICEFILES := support/$(PROGRAM_NAME).service
 
 # Default target
 all: $(TARGET)
@@ -39,6 +41,10 @@ $(TARGET): $(OBJECTS)
 
 # Compile object files
 %.o: %.c
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c -o $@ $<
+
+# Compile object files in src directory  
+$(SRCDIR)/%.o: $(SRCDIR)/%.c
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c -o $@ $<
 
 # Development build with debug symbols and no optimization
@@ -55,16 +61,17 @@ clean:
 
 # Distclean - remove all generated files
 distclean: clean
-	rm -f $(MANPAGES) $(CONFIGFILES)
+	rm -f $(MANPAGES)
+	rm -rf logs/*.log
 
 # Install the program and supporting files
 install: $(TARGET)
 	install -d $(DESTDIR)$(BINDIR)
 	install -m 755 $(TARGET) $(DESTDIR)$(BINDIR)/
 	install -d $(DESTDIR)$(SYSCONFDIR)/default
-	install -m 644 $(PROGRAM_NAME).conf $(DESTDIR)$(SYSCONFDIR)/default/$(PROGRAM_NAME)
+	install -m 644 $(CONFIGFILES) $(DESTDIR)$(SYSCONFDIR)/default/$(PROGRAM_NAME)
 	install -d $(DESTDIR)$(SYSTEMDDIR)
-	install -m 644 $(PROGRAM_NAME).service $(DESTDIR)$(SYSTEMDDIR)/
+	install -m 644 $(SERVICEFILES) $(DESTDIR)$(SYSTEMDDIR)/
 	# Create runtime directory for Unix domain sockets
 	install -d $(DESTDIR)/run/cmxd -m 755
 
@@ -77,6 +84,26 @@ uninstall:
 # Test build (syntax check only)
 test: $(SOURCES)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -fsyntax-only $(SOURCES)
+
+# Test executables
+test-all: $(TARGET)
+	@echo "Building test executables..."
+	@for test in tests/test-*.c; do \
+		if [ -f "$$test" ]; then \
+			testname=$$(basename "$$test" .c); \
+			echo "Building $$testname..."; \
+			$(CC) $(CPPFLAGS) $(CFLAGS) -I$(SRCDIR) -o "tests/$$testname" "$$test" $(filter-out $(SRCDIR)/$(PROGRAM_NAME).o,$(OBJECTS)) $(LIBS); \
+		fi \
+	done
+	@if [ -f "tests/analyze-logs.c" ]; then \
+		echo "Building analyze-logs..."; \
+		$(CC) $(CPPFLAGS) $(CFLAGS) -I$(SRCDIR) -o "tests/analyze-logs" "tests/analyze-logs.c" $(SRCDIR)/cmxd-calculations.o $(LIBS); \
+	fi
+	@echo "Test executables built in tests/ directory"
+
+# Clean test executables
+test-clean:
+	rm -f tests/test-* tests/analyze-logs
 
 # Help target
 help:
@@ -91,7 +118,9 @@ help:
 	@echo "  install-systemd - Install with systemd service"
 	@echo "  uninstall-systemd - Remove systemd service"
 	@echo "  test          - Syntax check only"
+	@echo "  test-all      - Build all test executables"
+	@echo "  test-clean    - Remove test executables"
 	@echo "  help          - Show this help"
 
 # Declare phony targets
-.PHONY: all debug analyze clean distclean install uninstall install-systemd uninstall-systemd test help
+.PHONY: all debug analyze clean distclean install uninstall install-systemd uninstall-systemd test test-all test-clean help

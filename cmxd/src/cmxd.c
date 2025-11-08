@@ -375,28 +375,39 @@ static int run_main_loop(void)
                 .timestamp = lid_sample.timestamp
             };
             
+            /* ==================== NEW SAMPLE ==================== */
+            log_debug("--------------------");
+            log_debug("BASE: X=%d, Y=%d, Z=%d", base_sample.x, base_sample.y, base_sample.z);
+            log_debug("LID:  X=%d, Y=%d, Z=%d", lid_sample.x, lid_sample.y, lid_sample.z);
+            log_debug("WRITTEN: base=%d %d %d, lid=%d %d %d", 
+                     base_calc_sample.x, base_calc_sample.y, base_calc_sample.z,
+                     lid_calc_sample.x, lid_calc_sample.y, lid_calc_sample.z);
+            log_debug("---");
+
             /* Calculate hinge angle for mode detection using 0-360° system */
             double hinge_angle = cmxd_calculate_hinge_angle_360(&base_calc_sample, &lid_calc_sample, base_scale, lid_scale);
+            log_debug("HINGE: %.1f°", hinge_angle);
             
             /* Calculate tilt angle for orientation display */
             double tilt_angle = cmxd_calculate_tilt_angle(lid_sample.x, lid_sample.y, lid_sample.z);
             
             /* Detect device mode using stable mode detection */
             const char* device_mode = "laptop";  /* Default fallback */
+            int orientation_code = 0;
             if (hinge_angle >= 0) {
                 /* Get orientation code for mode detection */
-                int orientation_code = cmxd_get_device_orientation(lid_sample.x, lid_sample.y, lid_sample.z);
+                orientation_code = cmxd_get_device_orientation(lid_sample.x, lid_sample.y, lid_sample.z);
                 device_mode = cmxd_get_stable_device_mode(hinge_angle, orientation_code);
             }
+            log_debug("MODE: %s", device_mode);
+            log_debug("*** angle=%.1f°, orientation_code=%d, tilt=%.1f°", hinge_angle, orientation_code, tilt_angle);
             
             /* Detect orientation using dual-sensor switching based on actual device mode */
             const char* orientation = cmxd_get_orientation_with_sensor_switching(
                 lid_sample.x, lid_sample.y, lid_sample.z,
                 base_sample.x, base_sample.y, base_sample.z, device_mode);
-            
-            log_debug("Processing sensor data - Base[%d,%d,%d] Lid[%d,%d,%d] Hinge=%.1f° Tilt=%.1f° -> Mode: %s, Orientation: %s", 
-                    base_sample.x, base_sample.y, base_sample.z,
-                    lid_sample.x, lid_sample.y, lid_sample.z, hinge_angle, tilt_angle, device_mode, orientation);
+            log_debug("ORIENT: %s", orientation);
+            log_debug("*** mode=%s, lid_tilt=%.1f°", device_mode, tilt_angle);
             
             /* Write detected mode to kernel module and send events */
             if (cmxd_write_mode_with_events(device_mode) < 0) {

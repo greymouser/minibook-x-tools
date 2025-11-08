@@ -11,8 +11,8 @@
 #define _GNU_SOURCE
 
 #include "cmxd-events.h"
-// #include "cmxd-data.h"  // Commented out for standalone testing
-#include "cmxd-paths-test.h"
+#include "cmxd-data.h"
+#include "cmxd-paths.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -607,15 +607,14 @@ int cmxd_write_mode_with_events(const char *mode)
     
     /* Check if mode has actually changed */
     if (strcmp(current_mode, mode) == 0) {
-        log_debug("Mode unchanged (%s), skipping write and events", mode);
+        /* Mode unchanged debug output reduced */
         return 0;
     }
     
     /* Write to kernel module */
-    // if (cmxd_write_mode(mode) < 0) {
-    //     return -1;
-    // }
-    /* STUB: Skip actual kernel write for testing */
+    if (cmxd_write_mode(mode) < 0) {
+        return -1;
+    }
     
     /* Update current state */
     strncpy(current_mode, mode, sizeof(current_mode) - 1);
@@ -645,15 +644,14 @@ int cmxd_write_orientation_with_events(const char *orientation)
     
     /* Check if orientation has actually changed */
     if (strcmp(current_orientation, orientation) == 0) {
-        log_debug("Orientation unchanged (%s), skipping write and events", orientation);
+        /* Orientation unchanged debug output reduced */
         return 0;
     }
     
     /* Write to kernel module */
-    // if (cmxd_write_orientation(orientation) < 0) {
-    //     return -1;
-    // }
-    /* STUB: Skip actual kernel write for testing */
+    if (cmxd_write_orientation(orientation) < 0) {
+        return -1;
+    }
     
     /* Update current state */
     strncpy(current_orientation, orientation, sizeof(current_orientation) - 1);

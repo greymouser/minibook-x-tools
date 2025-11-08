@@ -149,8 +149,8 @@ int cmxd_write_vector(const char *name, int x, int y, int z)
     }
     
     if (cmxd_safe_fclose(f, path) < 0) return -1;
-    
-    log_debug("Wrote %s: %d %d %d", name, x, y, z);
+
+    /* Sensor write debug output reduced for cleaner format */
     return 0;
 }
 
@@ -181,7 +181,7 @@ int cmxd_write_mode(const char *mode)
     
     if (cmxd_safe_fclose(f, path) < 0) return -1;
     
-    log_debug("Wrote mode: %s", mode);
+    /* Mode write debug output shown in main loop */
     return 0;
 }
 
@@ -212,7 +212,7 @@ int cmxd_write_orientation(const char *orientation)
     
     if (cmxd_safe_fclose(f, path) < 0) return -1;
     
-    log_debug("Wrote orientation: %s", orientation);
+    /* Orientation write debug output shown in main loop */
     return 0;
 }
 

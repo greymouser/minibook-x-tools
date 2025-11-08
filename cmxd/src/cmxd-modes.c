@@ -126,7 +126,7 @@ const char* cmxd_get_device_mode(double angle, const char* current_mode_param)
         }
     }
     
-    debug_log("Mode detection: angle=%.1f° -> %s", angle, new_mode);
+    /* Mode detection debug output reduced for cleaner format */
     return new_mode;
 }
 

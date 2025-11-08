@@ -116,7 +116,7 @@ const char* cmxd_get_orientation_simple(double x, double y, double z)
     int orientation = cmxd_get_device_orientation(x, y, z);
     const char* orientation_name = cmxd_get_platform_orientation(orientation);
     
-    debug_log("Simple orientation: %s (device_code=%d)", orientation_name, orientation);
+    /* Orientation debug output reduced for cleaner format */
     
     return orientation_name;
 }
@@ -144,16 +144,14 @@ const char* cmxd_get_orientation_with_tablet_protection(double x, double y, doub
         (strcmp(orientation_name, CMXD_ORIENTATION_LANDSCAPE) == 0 || 
          strcmp(orientation_name, CMXD_ORIENTATION_LANDSCAPE_FLIPPED) == 0)) {         /* Trying to switch to landscape */
         
-        debug_log("Tablet tilt lock: maintaining %s (tilt %.1f° < 45° lying flat), blocking switch to %s", 
-                 last_known_orientation, tilt_angle, orientation_name);
+        /* Tablet tilt lock debug output reduced */
         return last_known_orientation;
     }
     
     /* Normal orientation detection - update last known orientation */
     last_known_orientation = orientation_name;
     
-    debug_log("Normal orientation: %s (tilt %.1f°, mode %s)", 
-             orientation_name, tilt_angle, current_mode ? current_mode : "unknown");
+    /* Normal orientation debug output reduced */
     return orientation_name;
 }
 
@@ -171,18 +169,12 @@ const char* cmxd_get_orientation_with_sensor_switching(double lid_x, double lid_
     /* Only use tablet-specific orientation method in actual tablet mode */
     if (current_mode && (strcmp(current_mode, "tablet") == 0 || strcmp(current_mode, "tent") == 0)) {
         /* Tablet/Tent mode: Use base sensor direct orientation with tablet protection */
-        debug_log("Tablet/tent mode (%s, tilt %.1f°): using base sensor direct orientation", 
-                 current_mode, tilt_angle);
         
         /* Get base sensor orientation with tablet protection */
         orientation_name = cmxd_get_orientation_with_tablet_protection(base_x, base_y, base_z, current_mode);
         
-        debug_log("Tablet base sensor orientation: %s (base X=%.1f, Y=%.1f, Z=%.1f)", 
-                 orientation_name, base_x, base_y, base_z);
     } else {
         /* Non-tablet mode: Use simple lid-based orientation */
-        debug_log("Non-tablet mode (%s, tilt %.1f°): using simple lid sensor orientation", 
-                 current_mode ? current_mode : "unknown", tilt_angle);
         orientation_name = cmxd_get_orientation_simple(lid_x, lid_y, lid_z);
     }
     

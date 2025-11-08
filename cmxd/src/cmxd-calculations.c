@@ -180,8 +180,7 @@ double cmxd_calculate_hinge_angle(const struct cmxd_accel_sample *base, const st
     /* Convert to degrees (0-180°) */
     double angle = acos(cos_angle) * 180.0 / M_PI;
     
-    debug_log("Hinge angle: base[%.2f,%.2f,%.2f] lid[%.2f,%.2f,%.2f] cos=%.3f -> %.1f°", 
-             base_x, base_y, base_z, lid_x, lid_y, lid_z, cos_angle, angle);
+    /* Verbose debug output removed to clean up format - shown in main loop */
     
     return angle;
 }
@@ -243,20 +242,12 @@ double cmxd_calculate_hinge_angle_360(const struct cmxd_accel_sample *base, cons
     if (is_folded_back) {
         /* We're in the "folded back" region - convert to 180-360° range */
         angle_360 = 360.0 - base_angle;
-        debug_log("Folded back mode: base_z=%.2f lid_z=%.2f cross_y=%.3f base_angle=%.1f° -> 360°-angle=%.1f°", 
-                 base_z, lid_z, cross_y, base_angle, angle_360);
+        debug_log("*** FOLD-BACK: cross_y=%.1f base=%.1f° -> %.1f°", cross_y, base_angle, angle_360);
     } else {
         /* Normal opening range 0-180° */
         angle_360 = base_angle;
-        debug_log("Normal opening: base_z=%.2f lid_z=%.2f cross_y=%.3f -> %.1f°", 
-                 base_z, lid_z, cross_y, angle_360);
+        debug_log("*** NORMAL: cross_y=%.1f -> %.1f°", cross_y, angle_360);
     }
-    
-    /* Alternative method using cross product magnitude for validation */
-    double cross_magnitude = sqrt(cross_x*cross_x + cross_y*cross_y + cross_z*cross_z);
-    
-    debug_log("Hinge 360°: base[%.2f,%.2f,%.2f] lid[%.2f,%.2f,%.2f] cross_y=%.3f cross_mag=%.3f base_angle=%.1f° -> %.1f°", 
-             base_x, base_y, base_z, lid_x, lid_y, lid_z, cross_y, cross_magnitude, base_angle, angle_360);
     
     return angle_360;
 }

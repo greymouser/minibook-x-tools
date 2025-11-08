@@ -101,22 +101,20 @@ void process_log_file(const char *filename) {
             };
             
             /* Calculate gravity-aware hinge angle */
-            double angle = cmxd_calculate_hinge_angle_360(&base_sample, &lid_sample);
+            double base_scale = 0.009582;  // Default scale value
+            double lid_scale = 0.009582;   // Default scale value  
+            double angle = cmxd_calculate_hinge_angle_360(&base_sample, &lid_sample, base_scale, lid_scale);
             
             if (angle >= 0) {
                 const char* mode = get_mode_from_angle(angle);
                 
-                /* Detect gravity orientations for analysis */
-                int base_grav = cmxd_detect_gravity_orientation(base_sample.x, base_sample.y, base_sample.z);
-                int lid_grav = cmxd_detect_gravity_orientation(lid_sample.x, lid_sample.y, lid_sample.z);
-                
                 /* Show first 10 samples and every 10th after that, plus some random sampling */
                 if (sample_count < 10 || sample_count % 10 == 0 || total_samples < 50) {
-                    printf("%02d:%02d:%02d     Base[%4d,%4d,%4d]   Lid[%4d,%4d,%4d]   %6.1f°  %-8s B%d,L%d\n",
+                    printf("%02d:%02d:%02d     Base[%4d,%4d,%4d]   Lid[%4d,%4d,%4d]   %6.1f°  %-8s\n",
                            (sample_count / 600) % 24, (sample_count / 10) % 60, sample_count % 10,
                            current_sample.base_x, current_sample.base_y, current_sample.base_z,
                            current_sample.lid_x, current_sample.lid_y, current_sample.lid_z,
-                           angle, mode, base_grav, lid_grav);
+                           angle, mode);
                 }
                 
                 /* Collect statistics */

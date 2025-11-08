@@ -48,6 +48,28 @@ cd cmxd && make && sudo make install
 make all  # builds all components
 ```
 
+## Unloading and loading Modules
+```bash
+# Unload kernel module
+sudo rmmod cmx     # From cmx/
+sudo rmmod mxc4005 # From cmx/ , also removes the supporting driver
+
+# Load the module
+sudo insmod ./cmx.ko  # From cmx/
+```
+
+### Running the Daemon
+```bash
+# From the root directory of the project
+sudo cmxd -v  # from cmxd/, verbose output for debugging
+
+## To run the daemon and capture logs using tee
+sudo cmxd -v 2>&1 | tee cmxd.log # from cmxd/
+
+# To timeout after a period and capture the logs
+sudo timeout 60 cmxd -v > cmxd.log 2>&1 # from cmxd/
+```
+
 ### Critical Paths
 - **IIO devices**: `/sys/bus/iio/devices/iio:device[01]/` - accelerometer raw data
 - **Kernel sysfs**: `/sys/devices/platform/cmx/` - module configuration and data input
