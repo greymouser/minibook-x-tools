@@ -18,12 +18,15 @@
 #include <sys/time.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <sys/socket.h>
+#include <sys/un.h>
 #include <fcntl.h>
 #include <getopt.h>
 #include <limits.h>
 #include <stdarg.h>
 #include <time.h>
 #include <dirent.h>
+#include <poll.h>
 #include <linux/input.h>
 
 #ifndef PATH_MAX
@@ -36,6 +39,7 @@
 
 #define PROGRAM_NAME "tablet-mode-daemon"
 #define VERSION "1.0"
+#define DEFAULT_SOCKET_PATH "/run/cmxd/events.sock"
 
 /* Configuration */
 struct config {
@@ -43,6 +47,7 @@ struct config {
     char config_file[PATH_MAX];
     char on_tablet_script[PATH_MAX];
     char on_laptop_script[PATH_MAX];
+    char socket_path[PATH_MAX];
     int verbose;
     unsigned int debounce_ms;
 };
@@ -54,6 +59,7 @@ static struct config cfg = {
     .config_file = "",
     .on_tablet_script = "",
     .on_laptop_script = "",
+    .socket_path = DEFAULT_SOCKET_PATH,
     .verbose = 0,
     .debounce_ms = 500  /* 500ms debounce to avoid rapid switching */
 };
@@ -294,13 +300,82 @@ static int auto_detect_tablet_device(char *device_path, size_t path_size)
     return 0;
 }
 
+/* Connect to cmxd Unix domain socket */
+static int connect_to_cmxd_socket(void)
+{
+    int sock_fd;
+    struct sockaddr_un addr;
+    
+    log_debug("Attempting to connect to cmxd socket: %s", cfg.socket_path);
+    
+    sock_fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (sock_fd < 0) {
+        log_error("Failed to create socket: %s", strerror(errno));
+        return -1;
+    }
+    
+    memset(&addr, 0, sizeof(addr));
+    addr.sun_family = AF_UNIX;
+    strncpy(addr.sun_path, cfg.socket_path, sizeof(addr.sun_path) - 1);
+    
+    if (connect(sock_fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+        log_warn("Failed to connect to cmxd socket %s: %s", cfg.socket_path, strerror(errno));
+        log_info("Will continue monitoring tablet mode events without cmxd integration");
+        close(sock_fd);
+        return -1;
+    }
+    
+    log_info("Connected to cmxd socket: %s", cfg.socket_path);
+    return sock_fd;
+}
+
+/* Handle cmxd socket events */
+static int handle_socket_event(int sock_fd)
+{
+    char buffer[512];
+    ssize_t bytes_read;
+    
+    bytes_read = read(sock_fd, buffer, sizeof(buffer) - 1);
+    if (bytes_read <= 0) {
+        if (bytes_read == 0) {
+            log_info("cmxd socket closed");
+        } else {
+            log_error("Error reading from cmxd socket: %s", strerror(errno));
+        }
+        return -1;
+    }
+    
+    buffer[bytes_read] = '\0';
+    log_debug("Received from cmxd: %s", buffer);
+    
+    /* Parse events from cmxd */
+    if (strstr(buffer, "MODE:")) {
+        if (strstr(buffer, "tablet")) {
+            log_info("cmxd reports tablet mode");
+            handle_tablet_mode_change(1);
+        } else if (strstr(buffer, "laptop")) {
+            log_info("cmxd reports laptop mode");
+            handle_tablet_mode_change(0);
+        }
+    }
+    
+    if (strstr(buffer, "ORIENTATION:")) {
+        log_debug("Orientation change from cmxd: %s", buffer);
+        /* Could handle orientation changes here in the future */
+    }
+    
+    return 0;
+}
+
 /* Main event monitoring loop */
 static int monitor_tablet_events(void)
 {
-    int fd;
+    int fd, sock_fd = -1;
     struct input_event ev;
     ssize_t n;
     char final_device[PATH_MAX];
+    struct pollfd poll_fds[2];
+    int poll_count;
     
     log_debug("Starting monitor_tablet_events function");
     
@@ -336,6 +411,20 @@ static int monitor_tablet_events(void)
     }
     log_debug("Device capabilities verified");
     
+    /* Try to connect to cmxd socket */
+    sock_fd = connect_to_cmxd_socket();
+    
+    /* Setup poll file descriptors */
+    poll_fds[0].fd = fd;
+    poll_fds[0].events = POLLIN;
+    poll_count = 1;
+    
+    if (sock_fd >= 0) {
+        poll_fds[1].fd = sock_fd;
+        poll_fds[1].events = POLLIN;
+        poll_count = 2;
+    }
+    
     /* Get and handle initial state */
     log_debug("Getting initial tablet mode state");
     int initial_state = get_initial_state(fd);
@@ -347,40 +436,88 @@ static int monitor_tablet_events(void)
     }
     
     log_info("Monitoring tablet mode events on %s", final_device);
+    if (sock_fd >= 0) {
+        log_info("Also monitoring cmxd events from %s", cfg.socket_path);
+    }
     log_debug("Entering main event loop");
     
     /* Event monitoring loop */
     while (running) {
-        n = read(fd, &ev, sizeof(ev));
+        int poll_result = poll(poll_fds, poll_count, -1);
         
-        if (n < 0) {
+        if (poll_result < 0) {
             if (errno == EINTR) {
                 /* Interrupted by signal - check if we should exit */
-                log_debug("Read interrupted by signal, running=%d", running);
+                log_debug("Poll interrupted by signal, running=%d", running);
                 if (!running) {
                     log_debug("Received signal, exiting gracefully");
                     break;
                 }
                 continue;
             }
-            log_error("Error reading from device: %s", strerror(errno));
+            log_error("Poll error: %s", strerror(errno));
             break;
         }
         
-        if (n != sizeof(ev)) {
-            log_warn("Incomplete event read: %zd bytes", n);
+        if (poll_result == 0) {
+            /* Timeout (shouldn't happen with -1 timeout) */
             continue;
         }
         
-        /* Process tablet mode switch events */
-        if (ev.type == EV_SW && ev.code == SW_TABLET_MODE) {
-            log_debug("SW_TABLET_MODE event: value=%d", ev.value);
-            handle_tablet_mode_change(ev.value);
+        /* Check input device events */
+        if (poll_fds[0].revents & POLLIN) {
+            n = read(fd, &ev, sizeof(ev));
+            
+            if (n < 0) {
+                if (errno == EINTR) {
+                    continue;
+                }
+                log_error("Error reading from device: %s", strerror(errno));
+                break;
+            }
+            
+            if (n != sizeof(ev)) {
+                log_warn("Incomplete event read: %zd bytes", n);
+                continue;
+            }
+            
+            /* Process tablet mode switch events */
+            if (ev.type == EV_SW && ev.code == SW_TABLET_MODE) {
+                log_debug("SW_TABLET_MODE event: value=%d", ev.value);
+                handle_tablet_mode_change(ev.value);
+            }
+        }
+        
+        /* Check cmxd socket events */
+        if (poll_count > 1 && (poll_fds[1].revents & POLLIN)) {
+            if (handle_socket_event(sock_fd) < 0) {
+                log_info("cmxd socket disconnected, continuing with input device only");
+                close(sock_fd);
+                sock_fd = -1;
+                poll_count = 1;
+            }
+        }
+        
+        /* Handle errors on input device */
+        if (poll_fds[0].revents & (POLLERR | POLLHUP | POLLNVAL)) {
+            log_error("Poll error on input device");
+            break;
+        }
+        
+        /* Handle errors on socket */
+        if (poll_count > 1 && (poll_fds[1].revents & (POLLERR | POLLHUP | POLLNVAL))) {
+            log_info("Poll error on cmxd socket, continuing with input device only");
+            close(sock_fd);
+            sock_fd = -1;
+            poll_count = 1;
         }
     }
     
     log_debug("Exiting main event loop");
     close(fd);
+    if (sock_fd >= 0) {
+        close(sock_fd);
+    }
     return 0;
 }
 
@@ -466,6 +603,8 @@ static int load_config(const char *config_file)
             /* Process configuration options */
             if (strcmp(k, "tablet_device") == 0) {
                 strncpy(cfg.tablet_device, v, sizeof(cfg.tablet_device) - 1);
+            } else if (strcmp(k, "socket_path") == 0) {
+                strncpy(cfg.socket_path, v, sizeof(cfg.socket_path) - 1);
             } else if (strcmp(k, "on_tablet_script") == 0) {
                 strncpy(cfg.on_tablet_script, v, sizeof(cfg.on_tablet_script) - 1);
             } else if (strcmp(k, "on_laptop_script") == 0) {
@@ -514,6 +653,7 @@ static void usage(const char *program)
     printf("OPTIONS:\n");
     printf("  -d, --device DEVICE     Tablet mode input device (default: auto-detect)\n");
     printf("  -c, --config FILE       Configuration file path (overrides auto-detection)\n");
+    printf("  -s, --socket PATH       cmxd socket path (default: %s)\n", DEFAULT_SOCKET_PATH);
     printf("  -t, --on-tablet CMD     Command to run when entering tablet mode\n");
     printf("  -l, --on-laptop CMD     Command to run when entering laptop mode\n");
     printf("  -b, --debounce MS       Debounce time in milliseconds (default: %u)\n", cfg.debounce_ms);
@@ -537,10 +677,11 @@ static void usage(const char *program)
 int main(int argc, char *argv[])
 {
     int opt;
-    const char *short_opts = "d:c:t:l:b:vhV";
+    const char *short_opts = "d:c:s:t:l:b:vhV";
     static struct option long_opts[] = {
         {"device",     required_argument, 0, 'd'},
         {"config",     required_argument, 0, 'c'},
+        {"socket",     required_argument, 0, 's'},
         {"on-tablet",  required_argument, 0, 't'},
         {"on-laptop",  required_argument, 0, 'l'},
         {"debounce",   required_argument, 0, 'b'},
@@ -558,6 +699,9 @@ int main(int argc, char *argv[])
                 break;
             case 'c':
                 strncpy(cfg.config_file, optarg, sizeof(cfg.config_file) - 1);
+                break;
+            case 's':
+                strncpy(cfg.socket_path, optarg, sizeof(cfg.socket_path) - 1);
                 break;
             case 't':
                 strncpy(cfg.on_tablet_script, optarg, sizeof(cfg.on_tablet_script) - 1);
