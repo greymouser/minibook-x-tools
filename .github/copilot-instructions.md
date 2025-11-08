@@ -59,29 +59,24 @@ sudo insmod ./cmx.ko  # From cmx/
 ```
 
 ### Running the Daemon
+
+Running `make` in the `cmxd` directory builds all components. It places `cmxd` in the `cmxd/` directory. `cmxd` can be run from the `./cmxd` directory of the project.
+
 ```bash
 # From the root directory of the project
-sudo cmxd -v  # from cmxd/, verbose output for debugging
+sudo ./cmxd -v  # verbose output for debugging
 
 ## To run the daemon and capture logs using tee
-sudo cmxd -v 2>&1 | tee cmxd.log # from cmxd/
+sudo ./cmxd -v 2>&1 | tee cmxd.log
 
 # To timeout after a period and capture the logs
-sudo timeout 60 cmxd -v > cmxd.log 2>&1 # from cmxd/
+sudo timeout 60 ./cmxd -v > cmxd.log 2>&1
 ```
 
 ### Critical Paths
 - **IIO devices**: `/sys/bus/iio/devices/iio:device[01]/` - accelerometer raw data
 - **Kernel sysfs**: `/sys/devices/platform/cmx/` - module configuration and data input
 - **Socket interface**: `/run/cmxd/events.sock` - daemon event communication
-
-### Testing Infrastructure
-Modular test files in `cmxd/test-*.c`:
-```bash
-cd cmxd
-make test-integration  # builds test-integration.c
-./test-integration     # runs specific angle calculation tests
-```
 
 ## Data Flow Architecture
 
@@ -127,10 +122,10 @@ watch 'cat /sys/devices/platform/cmx/mode'
 ### Debugging Daemon Issues
 ```bash
 # Run daemon in foreground with verbose output
-sudo cmxd -v
+sudo ./cmxd -v  # This will run indefinitely and will need to be terminated manually
 
 # Monitor sysfs communication
-sudo strace -e write cmxd 2>&1 | grep sysfs
+sudo strace -e write ./cmxd 2>&1 | grep sysfs
 ```
 
 If you are asked to check the cmxd.log, you will need to process the entire thing, not just head or tail a bit of it; there is too much data generated for a snapshot to be useful.
