@@ -44,7 +44,6 @@ struct config {
     char on_tablet_script[PATH_MAX];
     char on_laptop_script[PATH_MAX];
     int verbose;
-    int daemon_mode;
     unsigned int debounce_ms;
 };
 
@@ -56,7 +55,6 @@ static struct config cfg = {
     .on_tablet_script = "",
     .on_laptop_script = "",
     .verbose = 0,
-    .daemon_mode = 1,
     .debounce_ms = 500  /* 500ms debounce to avoid rapid switching */
 };
 
@@ -86,21 +84,12 @@ static void signal_handler(int sig)
 static void log_msg(const char *level, const char *fmt, ...)
 {
     va_list args;
-    struct timeval tv;
-    char timestr[64];
     
     if (!cfg.verbose && strcmp(level, "DEBUG") == 0)
         return;
         
-    gettimeofday(&tv, NULL);
-    strftime(timestr, sizeof(timestr), "%Y-%m-%d %H:%M:%S", localtime(&tv.tv_sec));
-    
-    if (cfg.daemon_mode) {
-        /* Use syslog format for daemon mode */
-        fprintf(stderr, "%s[%d]: [%s] ", PROGRAM_NAME, getpid(), level);
-    } else {
-        fprintf(stderr, "%s [%s] ", timestr, level);
-    }
+    /* Always use standard stderr logging */
+    fprintf(stderr, "%s[%d]: [%s] ", PROGRAM_NAME, getpid(), level);
     
     va_start(args, fmt);
     vfprintf(stderr, fmt, args);
@@ -528,7 +517,6 @@ static void usage(const char *program)
     printf("  -t, --on-tablet CMD     Command to run when entering tablet mode\n");
     printf("  -l, --on-laptop CMD     Command to run when entering laptop mode\n");
     printf("  -b, --debounce MS       Debounce time in milliseconds (default: %u)\n", cfg.debounce_ms);
-    printf("  -f, --foreground        Run in foreground (don't daemonize)\n");
     printf("  -v, --verbose           Enable verbose logging\n");
     printf("  -h, --help              Show this help\n");
     printf("  -V, --version           Show version\n");
@@ -539,7 +527,7 @@ static void usage(const char *program)
     printf("  3. Default example scripts (if no config found)\n");
     printf("\nEXAMPLES:\n");
     printf("  %s                                           # Use auto-detected device\n", program);
-    printf("  %s -v -f                                     # Verbose, foreground\n", program);
+    printf("  %s -v                                        # Verbose logging\n", program);
     printf("  %s -c ~/.config/tablet-mode/daemon.conf      # Specific config\n", program);
     printf("  %s -t 'onboard' -l 'pkill onboard'          # Virtual keyboard\n", program);
     printf("\nSee tablet-mode-daemon(8) for more information.\n");
@@ -549,14 +537,13 @@ static void usage(const char *program)
 int main(int argc, char *argv[])
 {
     int opt;
-    const char *short_opts = "d:c:t:l:b:fvhV";
+    const char *short_opts = "d:c:t:l:b:vhV";
     static struct option long_opts[] = {
         {"device",     required_argument, 0, 'd'},
         {"config",     required_argument, 0, 'c'},
         {"on-tablet",  required_argument, 0, 't'},
         {"on-laptop",  required_argument, 0, 'l'},
         {"debounce",   required_argument, 0, 'b'},
-        {"foreground", no_argument,       0, 'f'},
         {"verbose",    no_argument,       0, 'v'},
         {"help",       no_argument,       0, 'h'},
         {"version",    no_argument,       0, 'V'},
@@ -580,9 +567,6 @@ int main(int argc, char *argv[])
                 break;
             case 'b':
                 cfg.debounce_ms = atoi(optarg);
-                break;
-            case 'f':
-                cfg.daemon_mode = 0;
                 break;
             case 'v':
                 cfg.verbose = 1;
@@ -615,20 +599,9 @@ int main(int argc, char *argv[])
     }
     log_debug("Signal handlers setup successfully");
     
-    /* Daemonize if requested */
-    if (cfg.daemon_mode) {
-        log_debug("Daemonizing process...");
-        if (daemon(0, 0) < 0) {
-            log_error("Failed to daemonize: %s", strerror(errno));
-            exit(1);
-        }
-        log_debug("Daemonization successful");
-    }
-    
     log_info("Starting %s %s", PROGRAM_NAME, VERSION);
     log_debug("Process PID: %d", getpid());
     log_debug("User ID: %d, Group ID: %d", getuid(), getgid());
-    log_debug("Daemon mode: %s", cfg.daemon_mode ? "enabled" : "disabled");
     log_debug("Verbose logging: %s", cfg.verbose ? "enabled" : "disabled");
     
     if (cfg.tablet_device[0]) {
