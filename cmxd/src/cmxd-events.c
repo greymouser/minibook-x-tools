@@ -13,6 +13,7 @@
 #include "cmxd-events.h"
 #include "cmxd-data.h"
 #include "cmxd-paths.h"
+#include "cmxd-protocol.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -361,38 +362,26 @@ static int init_dbus(void)
 /* Send Unix domain socket event */
 static int send_unix_socket_event(const struct cmxd_event *event)
 {
-    char message[512];
-    struct timespec ts;
+    char message[CMXD_PROTOCOL_MAX_MESSAGE_SIZE];
     int ret, sent_count = 0, failed_count = 0;
+    const char *event_type;
     
     if (!events_config->enable_unix_socket || server_socket_fd < 0) {
         return 0;
     }
     
-    /* Get timestamp */
-    if (clock_gettime(CLOCK_REALTIME, &ts) < 0) {
-        log_warn("Failed to get timestamp: %s", strerror(errno));
-        ts.tv_sec = 0;
-        ts.tv_nsec = 0;
-    }
+    /* Determine event type string */
+    event_type = (event->type == CMXD_EVENT_MODE_CHANGE) ? 
+                 CMXD_PROTOCOL_EVENT_MODE : CMXD_PROTOCOL_EVENT_ORIENTATION;
     
-    /* Format message as JSON for easy parsing by clients */
-    ret = snprintf(message, sizeof(message),
-                   "{"
-                   "\"timestamp\":%ld.%09ld,"
-                   "\"type\":\"%s\","
-                   "\"value\":\"%s\""
-                   "%s%s%s"
-                   "}\n",
-                   ts.tv_sec, ts.tv_nsec,
-                   (event->type == CMXD_EVENT_MODE_CHANGE) ? "mode" : "orientation",
-                   event->value,
-                   event->previous_value ? ",\"previous\":\"" : "",
-                   event->previous_value ? event->previous_value : "",
-                   event->previous_value ? "\"" : "");
+    /* Format message using protocol function */
+    ret = cmxd_protocol_format_message(message, sizeof(message),
+                                       event_type, event->value, 
+                                       event->previous_value);
     
-    if (ret >= (int)sizeof(message)) {
-        log_warn("Unix socket message truncated");
+    if (ret < 0) {
+        log_warn("Failed to format Unix socket message");
+        return -1;
     }
     
     /* Thread-safe client broadcasting */

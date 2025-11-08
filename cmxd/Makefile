@@ -18,34 +18,60 @@ LIBS := -lm -lpthread
 PREFIX ?= /usr
 DESTDIR ?=
 BINDIR := $(PREFIX)/sbin
+LIBDIR := $(PREFIX)/lib
+INCLUDEDIR := $(PREFIX)/include/libcmx
 SYSCONFDIR := /etc
 SYSTEMDDIR := $(PREFIX)/lib/systemd/system
 MANDIR := $(PREFIX)/share/man
 
 # Source files
 SRCDIR := src
-SOURCES := $(SRCDIR)/$(PROGRAM_NAME).c $(SRCDIR)/cmxd-calculations.c $(SRCDIR)/cmxd-orientation.c $(SRCDIR)/cmxd-modes.c $(SRCDIR)/cmxd-data.c $(SRCDIR)/cmxd-events.c
-OBJECTS := $(SOURCES:.c=.o)
+DAEMON_SOURCES := $(SRCDIR)/$(PROGRAM_NAME).c $(SRCDIR)/cmxd-calculations.c $(SRCDIR)/cmxd-orientation.c $(SRCDIR)/cmxd-modes.c $(SRCDIR)/cmxd-data.c $(SRCDIR)/cmxd-events.c
+LIB_SOURCES := $(SRCDIR)/cmxd-protocol.c
+DAEMON_OBJECTS := $(DAEMON_SOURCES:.c=.o)
+LIB_OBJECTS := $(LIB_SOURCES:.c=.o)
+ALL_OBJECTS := $(DAEMON_OBJECTS) $(LIB_OBJECTS)
+
+# Targets
 TARGET := $(PROGRAM_NAME)
+LIBRARY := libcmx.so
+LIBRARY_SONAME := $(LIBRARY).1
+LIBRARY_FULLNAME := $(LIBRARY).1.0.0
+STATIC_LIBRARY := libcmx.a
+HEADER_FILES := $(SRCDIR)/cmxd-protocol.h
+
+# Documentation and config
 MANPAGES := $(PROGRAM_NAME).8
 DOCFILES := README.md
 CONFIGFILES := support/$(PROGRAM_NAME).conf
 SERVICEFILES := support/$(PROGRAM_NAME).service
 
 # Default target
-all: $(TARGET)
+all: $(TARGET) $(LIBRARY)
 
-# Build the main program
-$(TARGET): $(OBJECTS)
-	$(CC) $(LDFLAGS) -o $@ $^ $(LIBS)
+# Build the main program (link with the library)
+$(TARGET): $(DAEMON_OBJECTS) $(LIBRARY)
+	$(CC) $(LDFLAGS) -o $@ $(DAEMON_OBJECTS) -L. -lcmx $(LIBS)
 
-# Compile object files
+# Build shared library
+$(LIBRARY): $(LIBRARY_FULLNAME)
+	ln -sf $(LIBRARY_FULLNAME) $(LIBRARY)
+	ln -sf $(LIBRARY_FULLNAME) $(LIBRARY_SONAME)
+
+$(LIBRARY_FULLNAME): $(LIB_OBJECTS)
+	$(CC) -shared -fPIC -Wl,-soname,$(LIBRARY_SONAME) $(LDFLAGS) -o $@ $^
+
+# Build static library (optional)
+$(STATIC_LIBRARY): $(LIB_OBJECTS)
+	ar rcs $@ $^
+
+# Compile object files for daemon
 %.o: %.c
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c -o $@ $<
 
-# Compile object files in src directory  
+# Compile object files in src directory for daemon
 $(SRCDIR)/%.o: $(SRCDIR)/%.c
-	$(CC) $(CPPFLAGS) $(CFLAGS) -c -o $@ $<
+	$(CC) $(CPPFLAGS) $(CFLAGS) -fPIC -c -o $@ $<
 
 # Development build with debug symbols and no optimization
 debug: CFLAGS := -std=gnu11 -Wall -Wextra -Werror -O0 -g3 -DDEBUG
@@ -57,29 +83,45 @@ analyze: $(TARGET)
 
 # Clean build artifacts
 clean:
-	rm -f $(TARGET) $(OBJECTS)
+	rm -f $(TARGET) $(ALL_OBJECTS) $(LIBRARY) $(LIBRARY_SONAME) $(LIBRARY_FULLNAME) $(STATIC_LIBRARY)
 
 # Distclean - remove all generated files
 distclean: clean
 	rm -f $(MANPAGES)
 	rm -rf logs/*.log
 
-# Install the program and supporting files
-install: $(TARGET)
+# Install the program, library and supporting files
+install: $(TARGET) $(LIBRARY)
+	# Install daemon
 	install -d $(DESTDIR)$(BINDIR)
 	install -m 755 $(TARGET) $(DESTDIR)$(BINDIR)/
+	# Install shared library
+	install -d $(DESTDIR)$(LIBDIR)
+	install -m 755 $(LIBRARY_FULLNAME) $(DESTDIR)$(LIBDIR)/
+	ln -sf $(LIBRARY_FULLNAME) $(DESTDIR)$(LIBDIR)/$(LIBRARY_SONAME)
+	ln -sf $(LIBRARY_FULLNAME) $(DESTDIR)$(LIBDIR)/$(LIBRARY)
+	# Install headers
+	install -d $(DESTDIR)$(INCLUDEDIR)
+	install -m 644 $(HEADER_FILES) $(DESTDIR)$(INCLUDEDIR)/
+	# Install configuration
 	install -d $(DESTDIR)$(SYSCONFDIR)/default
 	install -m 644 $(CONFIGFILES) $(DESTDIR)$(SYSCONFDIR)/default/$(PROGRAM_NAME)
+	# Install systemd service
 	install -d $(DESTDIR)$(SYSTEMDDIR)
 	install -m 644 $(SERVICEFILES) $(DESTDIR)$(SYSTEMDDIR)/
+	# Update ldconfig
+	ldconfig
 	# Create runtime directory for Unix domain sockets
 	install -d $(DESTDIR)/run/cmxd -m 755
 
-# Uninstall the program and supporting files
+# Uninstall the program, library and supporting files
 uninstall:
 	rm -f $(DESTDIR)$(BINDIR)/$(TARGET)
+	rm -f $(DESTDIR)$(LIBDIR)/$(LIBRARY) $(DESTDIR)$(LIBDIR)/$(LIBRARY_SONAME) $(DESTDIR)$(LIBDIR)/$(LIBRARY_FULLNAME)
+	rm -rf $(DESTDIR)$(INCLUDEDIR)
 	rm -f $(DESTDIR)$(SYSCONFDIR)/default/$(PROGRAM_NAME)
 	rm -f $(DESTDIR)$(SYSTEMDDIR)/$(PROGRAM_NAME).service
+	ldconfig
 
 # Test build (syntax check only)
 test: $(SOURCES)
@@ -108,12 +150,14 @@ test-clean:
 # Help target
 help:
 	@echo "Available targets:"
-	@echo "  all           - Build the program (default)"
+	@echo "  all           - Build the program and library (default)"
+	@echo "  $(TARGET)     - Build the daemon program"
+	@echo "  $(LIBRARY)    - Build the shared library"
 	@echo "  debug         - Build with debug symbols and no optimization"
 	@echo "  analyze       - Build with static analysis enabled"
 	@echo "  clean         - Remove build artifacts"
 	@echo "  distclean     - Remove all generated files"
-	@echo "  install       - Install program and config files"
+	@echo "  install       - Install program, library and config files"
 	@echo "  uninstall     - Remove installed files"
 	@echo "  install-systemd - Install with systemd service"
 	@echo "  uninstall-systemd - Remove systemd service"

@@ -28,6 +28,7 @@
 #include <dirent.h>
 #include <poll.h>
 #include <linux/input.h>
+#include <cmxd-protocol.h>
 
 #ifndef PATH_MAX
 #define PATH_MAX 4096
@@ -401,7 +402,8 @@ static int connect_to_cmxd_socket(void)
 /* Handle cmxd socket events */
 static int handle_socket_event(int sock_fd)
 {
-    char buffer[512];
+    char buffer[CMXD_PROTOCOL_MAX_MESSAGE_SIZE];
+    struct cmxd_protocol_message parsed;
     ssize_t bytes_read;
     
     bytes_read = read(sock_fd, buffer, sizeof(buffer) - 1);
@@ -417,20 +419,39 @@ static int handle_socket_event(int sock_fd)
     buffer[bytes_read] = '\0';
     log_debug("Received from cmxd: %s", buffer);
     
-    /* Parse events from cmxd */
-    if (strstr(buffer, "MODE:")) {
-        if (strstr(buffer, "tablet")) {
-            log_info("cmxd reports tablet mode");
-            handle_tablet_mode_change(1);
-        } else if (strstr(buffer, "laptop")) {
-            log_info("cmxd reports laptop mode");
-            handle_tablet_mode_change(0);
+    /* Parse the protocol message */
+    if (cmxd_protocol_parse_message(buffer, &parsed) < 0) {
+        log_warn("Failed to parse cmxd message: %s", buffer);
+        return 0;  /* Continue, don't disconnect */
+    }
+    
+    log_debug("Parsed message - type: %s, value: %s, previous: %s", 
+             parsed.type, parsed.value, parsed.has_previous ? parsed.previous : "none");
+    
+    /* Handle mode change events */
+    if (strcmp(parsed.type, CMXD_PROTOCOL_EVENT_MODE) == 0) {
+        log_info("cmxd reports mode change: %s", parsed.value);
+        
+        /* Only trigger SW_TABLET_MODE for actual tablet mode */
+        int is_tablet = cmxd_protocol_is_tablet_mode(parsed.value);
+        handle_tablet_mode_change(is_tablet);
+        
+        /* Handle specific mode actions based on socket events */
+        if (strcmp(parsed.value, CMXD_PROTOCOL_MODE_LAPTOP) == 0) {
+            log_debug("Mode: laptop - normal laptop usage");
+        } else if (strcmp(parsed.value, CMXD_PROTOCOL_MODE_FLAT) == 0) {
+            log_debug("Mode: flat - device is flat/horizontal");
+        } else if (strcmp(parsed.value, CMXD_PROTOCOL_MODE_TENT) == 0) {
+            log_debug("Mode: tent - device in tent configuration");
+        } else if (strcmp(parsed.value, CMXD_PROTOCOL_MODE_TABLET) == 0) {
+            log_debug("Mode: tablet - device fully folded for tablet use");
         }
     }
     
-    if (strstr(buffer, "ORIENTATION:")) {
-        log_debug("Orientation change from cmxd: %s", buffer);
-        /* Could handle orientation changes here in the future */
+    /* Handle orientation change events */
+    if (strcmp(parsed.type, CMXD_PROTOCOL_EVENT_ORIENTATION) == 0) {
+        log_info("cmxd reports orientation change: %s", parsed.value);
+        /* Future: trigger screen rotation, UI adaptations, etc. */
     }
     
     return 0;

@@ -19,6 +19,25 @@ CFLAGS ?= -O2 -Wall -Wextra
 CPPFLAGS += -DVERSION=\"$(VERSION)\" -DPROGRAM_NAME=\"$(PROGRAM_NAME)\"
 LDFLAGS ?=
 
+# libcmx configuration (prefer installed version, fallback to local)
+LIBCMX_INCLUDE_INSTALLED := /usr/include/libcmx
+LIBCMX_LIB_INSTALLED := /usr/lib
+LIBCMX_INCLUDE_LOCAL := ../cmxd/src
+LIBCMX_LIB_LOCAL := ../cmxd
+
+# Check for installed libcmx, otherwise use local
+ifeq ($(wildcard $(LIBCMX_INCLUDE_INSTALLED)/cmxd-protocol.h),)
+    # Use local development version
+    CPPFLAGS += -I$(LIBCMX_INCLUDE_LOCAL)
+    LDFLAGS += -L$(LIBCMX_LIB_LOCAL)
+else
+    # Use installed version
+    CPPFLAGS += -I$(LIBCMX_INCLUDE_INSTALLED)
+    LDFLAGS += -L$(LIBCMX_LIB_INSTALLED)
+endif
+
+LIBS = -lcmx
+
 # Source files
 SOURCES = $(PROGRAM_NAME).c
 OBJECTS = $(SOURCES:.c=.o)
@@ -28,7 +47,7 @@ all: $(PROGRAM_NAME)
 
 # Build the main program
 $(PROGRAM_NAME): $(OBJECTS)
-	$(CC) $(LDFLAGS) -o $@ $^
+	$(CC) $(LDFLAGS) -o $@ $^ $(LIBS)
 
 # Compile source files
 %.o: %.c
