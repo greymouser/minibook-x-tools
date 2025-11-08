@@ -196,29 +196,20 @@ static int handle_tablet_mode_change(int tablet_mode)
     }
 }
 
-/* Check if device supports SW_TABLET_MODE */
+/* Check if device supports SW_TABLET_MODE events */
 static int check_device_capabilities(int fd)
 {
-    unsigned long evbit[NLONGS(EV_MAX)] = {0};
-    unsigned long swbit[NLONGS(SW_MAX)] = {0};
+    unsigned long sw_bits[NLONGS(SW_CNT)];
     
-    if (ioctl(fd, EVIOCGBIT(0, EV_MAX), evbit) < 0) {
-        log_error("Failed to get device event types: %s", strerror(errno));
+    /* Get switch capabilities */
+    if (ioctl(fd, EVIOCGBIT(EV_SW, SW_CNT), sw_bits) < 0) {
+        log_debug("Device does not support switch events");
         return -1;
     }
     
-    if (!test_bit(EV_SW, evbit)) {
-        log_error("Device does not support switch events");
-        return -1;
-    }
-    
-    if (ioctl(fd, EVIOCGBIT(EV_SW, SW_MAX), swbit) < 0) {
-        log_error("Failed to get switch capabilities: %s", strerror(errno));
-        return -1;
-    }
-    
-    if (!test_bit(SW_TABLET_MODE, swbit)) {
-        log_error("Device does not support SW_TABLET_MODE");
+    /* Check if SW_TABLET_MODE is supported */
+    if (!test_bit(SW_TABLET_MODE, sw_bits)) {
+        log_debug("Device does not support SW_TABLET_MODE");
         return -1;
     }
     
@@ -241,58 +232,136 @@ static int get_initial_state(int fd)
     return tablet_mode;
 }
 
-/* Auto-detect tablet mode device by scanning /dev/input/event* */
+/* Auto-detect tablet mode device by finding cmx platform device */
 static int auto_detect_tablet_device(char *device_path, size_t path_size)
 {
-    DIR *input_dir;
+    DIR *cmx_input_dir;
     struct dirent *entry;
-    char test_path[PATH_MAX];
+    char cmx_input_path[] = "/sys/devices/platform/cmx/input";
+    char test_input_path[PATH_MAX];
+    char dev_file_path[PATH_MAX];
+    char dev_content[32];
+    FILE *dev_file;
+    int major, minor;
     int fd;
     int found = 0;
     
-    log_debug("Auto-detecting tablet mode device...");
-    log_debug("Opening /dev/input directory");
+    log_debug("Auto-detecting tablet mode device via cmx sysfs...");
+    log_debug("Checking cmx input directory: %s", cmx_input_path);
     
-    input_dir = opendir("/dev/input");
-    if (!input_dir) {
-        log_error("Failed to open /dev/input: %s", strerror(errno));
-        return -1;
+    /* First try to find the device via cmx sysfs */
+    cmx_input_dir = opendir(cmx_input_path);
+    if (cmx_input_dir) {
+        log_debug("Found cmx input directory, scanning for input devices");
+        
+        while ((entry = readdir(cmx_input_dir)) != NULL) {
+            /* Look for input* directories */
+            if (strncmp(entry->d_name, "input", 5) != 0) {
+                continue;
+            }
+            
+            log_debug("Found input device: %s", entry->d_name);
+            
+            /* Look for event* subdirectories */
+            snprintf(test_input_path, sizeof(test_input_path), 
+                     "%s/%s", cmx_input_path, entry->d_name);
+            
+            DIR *event_dir = opendir(test_input_path);
+            if (!event_dir) {
+                log_debug("Cannot open input directory: %s", test_input_path);
+                continue;
+            }
+            
+            struct dirent *event_entry;
+            while ((event_entry = readdir(event_dir)) != NULL) {
+                if (strncmp(event_entry->d_name, "event", 5) != 0) {
+                    continue;
+                }
+                
+                /* Read the device major:minor from sysfs */
+                snprintf(dev_file_path, sizeof(dev_file_path),
+                         "%s/%s/dev", test_input_path, event_entry->d_name);
+                
+                dev_file = fopen(dev_file_path, "r");
+                if (!dev_file) {
+                    log_debug("Cannot read device file: %s", dev_file_path);
+                    continue;
+                }
+                
+                if (fgets(dev_content, sizeof(dev_content), dev_file)) {
+                    if (sscanf(dev_content, "%d:%d", &major, &minor) == 2) {
+                        snprintf(device_path, path_size, "/dev/input/%s", event_entry->d_name);
+                        log_debug("Found cmx device: %s (major=%d, minor=%d)", 
+                                 device_path, major, minor);
+                        
+                        /* Verify the device exists and has correct capabilities */
+                        fd = open(device_path, O_RDONLY);
+                        if (fd >= 0) {
+                            if (check_device_capabilities(fd) == 0) {
+                                log_info("Found tablet mode device via cmx sysfs: %s", device_path);
+                                found = 1;
+                                close(fd);
+                                fclose(dev_file);
+                                closedir(event_dir);
+                                closedir(cmx_input_dir);
+                                return 0;
+                            }
+                            close(fd);
+                        }
+                    }
+                }
+                fclose(dev_file);
+            }
+            closedir(event_dir);
+        }
+        closedir(cmx_input_dir);
+    } else {
+        log_debug("Cannot access cmx input directory: %s (%s)", cmx_input_path, strerror(errno));
     }
     
-    log_debug("Scanning /dev/input for event devices");
-    while ((entry = readdir(input_dir)) != NULL) {
-        /* Only check event devices */
-        if (strncmp(entry->d_name, "event", 5) != 0) {
-            continue;
+    /* Fallback: scan /dev/input if cmx sysfs method failed */
+    if (!found) {
+        log_debug("cmx sysfs detection failed, falling back to /dev/input scan");
+        DIR *input_dir = opendir("/dev/input");
+        if (!input_dir) {
+            log_error("Failed to open /dev/input: %s", strerror(errno));
+            return -1;
         }
         
-        snprintf(test_path, sizeof(test_path), "/dev/input/%s", entry->d_name);
-        log_debug("Testing device: %s", test_path);
-        
-        /* Try to open the device */
-        fd = open(test_path, O_RDONLY);
-        if (fd < 0) {
-            log_debug("Cannot open %s: %s", test_path, strerror(errno));
-            continue;
-        }
-        
-        /* Check if device supports SW_TABLET_MODE */
-        if (check_device_capabilities(fd) == 0) {
-            log_info("Found tablet mode device: %s", test_path);
-            snprintf(device_path, path_size, "%s", test_path);
-            found = 1;
+        log_debug("Scanning /dev/input for event devices");
+        while ((entry = readdir(input_dir)) != NULL) {
+            /* Only check event devices */
+            if (strncmp(entry->d_name, "event", 5) != 0) {
+                continue;
+            }
+            
+            snprintf(device_path, path_size, "/dev/input/%s", entry->d_name);
+            log_debug("Testing device: %s", device_path);
+            
+            /* Try to open the device */
+            fd = open(device_path, O_RDONLY);
+            if (fd < 0) {
+                log_debug("Cannot open %s: %s", device_path, strerror(errno));
+                continue;
+            }
+            
+            /* Check if device supports SW_TABLET_MODE */
+            if (check_device_capabilities(fd) == 0) {
+                log_info("Found tablet mode device via fallback scan: %s", device_path);
+                found = 1;
+                close(fd);
+                break;
+            }
+            
             close(fd);
-            break;
         }
         
-        close(fd);
+        closedir(input_dir);
     }
-    
-    closedir(input_dir);
     
     if (!found) {
-        log_error("No tablet mode device found in /dev/input/");
-        log_info("Try: sudo libinput list-devices | grep -i tablet");
+        log_error("No tablet mode device found");
+        log_info("Check if cmx kernel module is loaded and functioning");
         return -1;
     }
     
