@@ -1,8 +1,0 @@
-{
-    "files.associations": {
-        "module.h": "c",
-        "init.h": "c",
-        "input.h": "c"
-    },
-    "git.ignoreLimitWarning": true
-}
