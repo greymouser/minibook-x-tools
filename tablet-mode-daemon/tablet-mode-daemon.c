@@ -28,7 +28,7 @@
 #include <dirent.h>
 #include <poll.h>
 #include <linux/input.h>
-#include <cmxd-protocol.h>
+#include <libcmx/cmxd-protocol.h>
 
 #ifndef PATH_MAX
 #define PATH_MAX 4096
@@ -389,8 +389,7 @@ static int connect_to_cmxd_socket(void)
     strncpy(addr.sun_path, cfg.socket_path, sizeof(addr.sun_path) - 1);
     
     if (connect(sock_fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
-        log_warn("Failed to connect to cmxd socket %s: %s", cfg.socket_path, strerror(errno));
-        log_info("Will continue monitoring tablet mode events without cmxd integration");
+        log_error("Failed to connect to cmxd socket %s: %s", cfg.socket_path, strerror(errno));
         close(sock_fd);
         return -1;
     }
@@ -503,17 +502,20 @@ static int monitor_tablet_events(void)
     
     /* Try to connect to cmxd socket */
     sock_fd = connect_to_cmxd_socket();
+    if (sock_fd < 0) {
+        log_error("Cannot operate without cmxd socket connection");
+        close(fd);
+        return -1;
+    }
     
     /* Setup poll file descriptors */
     poll_fds[0].fd = fd;
     poll_fds[0].events = POLLIN;
     poll_count = 1;
     
-    if (sock_fd >= 0) {
-        poll_fds[1].fd = sock_fd;
-        poll_fds[1].events = POLLIN;
-        poll_count = 2;
-    }
+    poll_fds[1].fd = sock_fd;
+    poll_fds[1].events = POLLIN;
+    poll_count = 2;
     
     /* Get and handle initial state */
     log_debug("Getting initial tablet mode state");
@@ -581,10 +583,10 @@ static int monitor_tablet_events(void)
         /* Check cmxd socket events */
         if (poll_count > 1 && (poll_fds[1].revents & POLLIN)) {
             if (handle_socket_event(sock_fd) < 0) {
-                log_info("cmxd socket disconnected, continuing with input device only");
+                log_error("cmxd socket disconnected, terminating");
                 close(sock_fd);
                 sock_fd = -1;
-                poll_count = 1;
+                break;
             }
         }
         
@@ -596,10 +598,10 @@ static int monitor_tablet_events(void)
         
         /* Handle errors on socket */
         if (poll_count > 1 && (poll_fds[1].revents & (POLLERR | POLLHUP | POLLNVAL))) {
-            log_info("Poll error on cmxd socket, continuing with input device only");
+            log_error("Lost connection to cmxd socket, terminating");
             close(sock_fd);
             sock_fd = -1;
-            poll_count = 1;
+            break;
         }
     }
     
