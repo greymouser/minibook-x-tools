@@ -8,7 +8,6 @@
  */
 
 #define _POSIX_C_SOURCE 200809L
-#define _GNU_SOURCE
 
 #include "cmxd-events.h"
 #include "cmxd-data.h"
@@ -292,7 +291,17 @@ static int init_unix_socket(void)
     /* Set up socket address */
     memset(&addr, 0, sizeof(addr));
     addr.sun_family = AF_UNIX;
-    strncpy(addr.sun_path, events_config->unix_socket_path, sizeof(addr.sun_path) - 1);
+    
+    /* Ensure socket path fits in sun_path buffer */
+    size_t path_len = strlen(events_config->unix_socket_path);
+    if (path_len >= sizeof(addr.sun_path)) {
+        log_error("Socket path too long: %s (max %zu chars)", 
+                  events_config->unix_socket_path, sizeof(addr.sun_path) - 1);
+        close(server_socket_fd);
+        return -1;
+    }
+    
+    strcpy(addr.sun_path, events_config->unix_socket_path);
     
     /* Bind socket */
     if (bind(server_socket_fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {

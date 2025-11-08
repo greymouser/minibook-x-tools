@@ -198,18 +198,14 @@ double cmxd_calculate_hinge_angle_360(const struct cmxd_accel_sample *base, cons
     
     /* Convert raw values to m/s² for analysis using provided scale factors */
     double base_x = base->x * base_scale;
-    double base_y = base->y * base_scale;
     double base_z = base->z * base_scale;
     
     double lid_x = lid->x * lid_scale;
-    double lid_y = lid->y * lid_scale;
     double lid_z = lid->z * lid_scale;
     
     /* Calculate the cross product to determine hinge direction */
     /* Cross product base × lid gives us the hinge axis direction */
-    double cross_x = base_y * lid_z - base_z * lid_y;
     double cross_y = base_z * lid_x - base_x * lid_z;
-    double cross_z = base_x * lid_y - base_y * lid_x;
     
     /* Use the Y component of cross product to determine fold direction */
     /* When laptop opens normally: cross_y should be positive */

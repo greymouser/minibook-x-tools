@@ -42,19 +42,6 @@ void cmxd_orientation_set_log_debug(void (*func)(const char *fmt, ...))
     log_debug_func = func;
 }
 
-/* Internal debug logging */
-static void debug_log(const char *fmt, ...)
-{
-    if (verbose_logging && log_debug_func) {
-        va_list args;
-        va_start(args, fmt);
-        char buffer[512];
-        vsnprintf(buffer, sizeof(buffer), fmt, args);
-        va_end(args);
-        log_debug_func("%s", buffer);
-    }
-}
-
 /* Initialize orientation detection module */
 void cmxd_orientation_init(void)
 {
@@ -160,10 +147,7 @@ const char* cmxd_get_orientation_with_tablet_protection(double x, double y, doub
 const char* cmxd_get_orientation_with_sensor_switching(double lid_x, double lid_y, double lid_z,
                                                       double base_x, double base_y, double base_z,
                                                       const char* current_mode)
-{
-    /* Calculate tilt angle using lid sensor only */
-    double tilt_angle = cmxd_calculate_tilt_angle(lid_x, lid_y, lid_z);
-    
+{    
     const char* orientation_name;
     
     /* Only use tablet-specific orientation method in actual tablet mode */

@@ -48,12 +48,12 @@
 #define CMXD_PROTOCOL_MODE_TABLET "tablet"
 
 /**
- * Orientation values
+ * Orientation values - portrait, portrait-flipped, landscape, landscape-flipped
  */
-#define CMXD_PROTOCOL_ORIENTATION_NORMAL "normal"
-#define CMXD_PROTOCOL_ORIENTATION_LEFT "left"
-#define CMXD_PROTOCOL_ORIENTATION_RIGHT "right"
-#define CMXD_PROTOCOL_ORIENTATION_INVERTED "inverted"
+#define CMXD_PROTOCOL_ORIENTATION_PORTRAIT "portrait"
+#define CMXD_PROTOCOL_ORIENTATION_PORTRAIT_FLIPPED "portrait-flipped"
+#define CMXD_PROTOCOL_ORIENTATION_LANDSCAPE "landscape"
+#define CMXD_PROTOCOL_ORIENTATION_LANDSCAPE_FLIPPED "landscape-flipped"
 
 /*
  * =============================================================================

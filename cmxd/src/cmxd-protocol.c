@@ -169,6 +169,7 @@ bool cmxd_protocol_is_tablet_mode(const char *mode_value)
         return false;
     }
     
-    /* Only 'tablet' mode should trigger SW_TABLET_MODE=1 */
-    return strcmp(mode_value, CMXD_PROTOCOL_MODE_TABLET) == 0;
+    /* Only 'tablet' and 'tent' mode should trigger SW_TABLET_MODE=1 */
+    return strcmp(mode_value, CMXD_PROTOCOL_MODE_TABLET) == 0 ||
+           strcmp(mode_value, CMXD_PROTOCOL_MODE_TENT) == 0;
 }
