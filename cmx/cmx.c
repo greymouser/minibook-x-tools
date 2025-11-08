@@ -64,11 +64,11 @@ MODULE_PARM_DESC(enable_mount_matrix, "Enable automatic mount matrix transformat
  * - Base sensor: 90° clockwise rotation
  */
 
-/* Lid sensor mount matrix (90° CCW rotation) */
+/* Lid sensor mount matrix (identity - no rotation needed) */
 static const char * const lid_sensor_mount_matrix[] = {
-	"0", "1", "0",    /* X' = Y  (laptop right = sensor back)  */
-	"-1", "0", "0",   /* Y' = -X (laptop back = sensor left)   */
-	"0", "0", "1"     /* Z' = Z  (laptop up = sensor up)       */
+	"1", "0", "0",    /* X' = X  (no rotation)  */
+	"0", "1", "0",    /* Y' = Y  (no rotation)  */
+	"0", "0", "1"     /* Z' = Z  (no rotation)  */
 };
 
 /* Base sensor mount matrix (90° CW rotation) */  
@@ -625,11 +625,12 @@ static int cmx_apply_mount_matrix_to_existing(struct i2c_client *client, bool is
 	}
 	
 	if (g_chip && g_chip->debug_mode) {
+		const char * const *matrix = is_lid ? lid_sensor_mount_matrix : base_sensor_mount_matrix;
 		pr_info(DRV_NAME ": %s mount matrix: [%s,%s,%s; %s,%s,%s; %s,%s,%s]\n",
 			is_lid ? "Lid" : "Base",
-			is_lid ? "0" : "0", is_lid ? "1" : "-1", "0",
-			is_lid ? "-1" : "1", is_lid ? "0" : "0", "0",
-			"0", "0", "1");
+			matrix[0], matrix[1], matrix[2],
+			matrix[3], matrix[4], matrix[5],
+			matrix[6], matrix[7], matrix[8]);
 	}
 	
 	return 0;
@@ -922,7 +923,7 @@ static int cmx_check_mxc4005_device(struct device *dev, void *data)
 			
 			pr_debug(DRV_NAME ": Found working MXC4005 device: %s on i2c-%d:0x%02x (%s)\n",
 				client->name, client->adapter->nr, client->addr,
-				ctx->found_count == 1 ? "base" : "lid");
+				ctx->found_count == 1 ? "lid" : "base");
 		}
 	}
 	return 0;
@@ -1068,9 +1069,12 @@ static int cmx_instantiate_mxc4005(int bus_nr, int addr, bool is_second, bool is
 		pr_debug(DRV_NAME ": Applying %s sensor mount matrix to i2c-%d:0x%02x\n", 
 			is_lid ? "lid" : "base", bus_nr, addr);
 		if (g_chip && g_chip->debug_mode) {
-			pr_info(DRV_NAME ": %s mount matrix: %s\n", 
+			const char * const *matrix = is_lid ? lid_sensor_mount_matrix : base_sensor_mount_matrix;
+			pr_info(DRV_NAME ": %s mount matrix: [%s,%s,%s; %s,%s,%s; %s,%s,%s]\n", 
 				is_lid ? "Lid" : "Base",
-				is_lid ? "[0,1,0; -1,0,0; 0,0,1]" : "[0,-1,0; 1,0,0; 0,0,1]");
+				matrix[0], matrix[1], matrix[2],
+				matrix[3], matrix[4], matrix[5], 
+				matrix[6], matrix[7], matrix[8]);
 		}
 	} else {
 		pr_debug(DRV_NAME ": Mount matrix disabled for i2c-%d:0x%02x, using identity transformation\n", bus_nr, addr);
