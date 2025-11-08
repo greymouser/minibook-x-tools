@@ -2,8 +2,8 @@
 /*
  * Mathematical Calculation Module
  * 
- * Provides mathematical functions for 3D vector operations, tilt calculations,
- * and hinge angle determination using dual accelerometer data.
+ * Provides simplified mathematical functions for hinge angle determination 
+ * using dual accelerometer data. Now simplified with correct mount matrices!
  * 
  * Copyright (c) 2025 Armando DiCianno <armando@noonshy.com>
  */
@@ -20,14 +20,6 @@ struct cmxd_accel_sample {
     uint64_t timestamp;    /* Sample timestamp */
 };
 
-/* Gravity orientation constants */
-#define CMXD_GRAVITY_X_DOWN  0
-#define CMXD_GRAVITY_X_UP    1  
-#define CMXD_GRAVITY_Y_DOWN  2
-#define CMXD_GRAVITY_Y_UP    3
-#define CMXD_GRAVITY_Z_DOWN  4
-#define CMXD_GRAVITY_Z_UP    5
-
 /* Basic 3D vector operations */
 double cmxd_calculate_magnitude(double x, double y, double z);
 int cmxd_normalize_vector(double x, double y, double z, 
@@ -35,15 +27,14 @@ int cmxd_normalize_vector(double x, double y, double z,
 double cmxd_calculate_dot_product(double x1, double y1, double z1,
                                  double x2, double y2, double z2);
 
-/* Angle calculations */
-double cmxd_calculate_tilt_angle(double x, double y, double z);
-double cmxd_calculate_hinge_angle(const struct cmxd_accel_sample *base, const struct cmxd_accel_sample *lid);
-double cmxd_calculate_hinge_angle_360(const struct cmxd_accel_sample *base, const struct cmxd_accel_sample *lid);
-
-/* Gravity and orientation detection */
-int cmxd_detect_gravity_orientation(double x, double y, double z);
+/* Simplified hinge angle calculations */
+double cmxd_calculate_hinge_angle(const struct cmxd_accel_sample *base, const struct cmxd_accel_sample *lid, 
+                                 double base_scale, double lid_scale);
+double cmxd_calculate_hinge_angle_360(const struct cmxd_accel_sample *base, const struct cmxd_accel_sample *lid,
+                                     double base_scale, double lid_scale);
 
 /* Utility functions */
+double cmxd_calculate_tilt_angle(double x, double y, double z);
 double cmxd_clamp(double value, double min_val, double max_val);
 double cmxd_rad_to_deg(double radians);
 double cmxd_deg_to_rad(double degrees);

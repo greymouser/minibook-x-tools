@@ -14,18 +14,23 @@ In the future, there may also be a desktop integration component (`tablet-mode-d
 - **`cmxd/`** - Userspace daemon that processes accelerometer data, calculates hinge angles, and communicates with kernel module
 - **`tablet-mode-daemon/`** - Desktop integration daemon that translates kernel events to desktop environment actions
 
-### Hardware Quirk: 90° Sensor Rotations
-The Minibook X has both accelerometers rotated 90°:
-- **Lid sensor**: 90° counter-clockwise (CCW) 
-- **Base sensor**: 90° clockwise (CW)
+### Hardware Quirk: Sensor Orientations
+The Minibook X accelerometer sensors have specific physical orientations:
+- **Lid sensor**: No rotation needed (identity matrix)
+- **Base sensor**: 90° clockwise (CW) rotation + Z-axis inversion
 
-There is a chance these rotations are incorrect and need to be changed.
+**Note**: The mount matrices have been empirically determined and corrected through analysis.
 
 Mount matrices in `cmx.c` handle coordinate transformations:
 ```c
-// Lid sensor (90° CCW): X'=Y, Y'=-X, Z'=Z
+// Lid sensor (identity): X'=X, Y'=Y, Z'=Z  
 static const char * const lid_sensor_mount_matrix[] = {
-    "0", "1", "0", "-1", "0", "0", "0", "0", "1"
+    "1", "0", "0", "0", "1", "0", "0", "0", "1"
+};
+
+// Base sensor (90° CW + Z invert): X'=-Y, Y'=X, Z'=-Z
+static const char * const base_sensor_mount_matrix[] = {
+    "0", "-1", "0", "1", "0", "0", "0", "0", "-1"
 };
 ```
 

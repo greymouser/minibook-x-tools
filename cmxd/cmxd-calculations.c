@@ -140,234 +140,123 @@ static void debug_log(const char *fmt, ...)
 
 /*
  * =============================================================================
- * HINGE ANGLE CALCULATIONS
+ * SIMPLIFIED HINGE ANGLE CALCULATIONS
  * =============================================================================
  */
 
 /* Calculate hinge angle from base and lid accelerometer readings */
-/* Uses simple dot product for reliable 0-180° range with state tracking */
-double cmxd_calculate_hinge_angle(const struct cmxd_accel_sample *base, const struct cmxd_accel_sample *lid)
+/* Uses simple dot product method - now that mount matrices are correct! */
+double cmxd_calculate_hinge_angle(const struct cmxd_accel_sample *base, const struct cmxd_accel_sample *lid,
+                                 double base_scale, double lid_scale)
 {
-    /* Convert raw accelerometer values to normalized vectors */
-    double base_magnitude = cmxd_calculate_magnitude((double)base->x, (double)base->y, (double)base->z);
-    double lid_magnitude = cmxd_calculate_magnitude((double)lid->x, (double)lid->y, (double)lid->z);
+    /* Convert raw accelerometer values to m/s² using provided scale factors */
+    double base_x = base->x * base_scale;
+    double base_y = base->y * base_scale;
+    double base_z = base->z * base_scale;
+    
+    double lid_x = lid->x * lid_scale;
+    double lid_y = lid->y * lid_scale;
+    double lid_z = lid->z * lid_scale;
+    
+    /* Calculate magnitudes */
+    double base_magnitude = cmxd_calculate_magnitude(base_x, base_y, base_z);
+    double lid_magnitude = cmxd_calculate_magnitude(lid_x, lid_y, lid_z);
     
     if (base_magnitude < 1.0 || lid_magnitude < 1.0) {
-        debug_log("Invalid accelerometer readings: base_mag=%.3f, lid_mag=%.3f", base_magnitude, lid_magnitude);
-        return -1.0; /* Invalid reading */
+        debug_log("Invalid accelerometer readings: base_mag=%.3f, lid_mag=%.3f", 
+                 base_magnitude, lid_magnitude);
+        return -1.0;
     }
     
-    /* Normalize the vectors */
-    double base_norm[3] = {
-        base->x / base_magnitude,
-        base->y / base_magnitude, 
-        base->z / base_magnitude
-    };
+    /* Calculate dot product of gravity vectors */
+    double dot_product = cmxd_calculate_dot_product(base_x, base_y, base_z, lid_x, lid_y, lid_z);
     
-    double lid_norm[3] = {
-        lid->x / lid_magnitude,
-        lid->y / lid_magnitude,
-        lid->z / lid_magnitude
-    };
+    /* Normalize by magnitudes to get cosine of angle */
+    double cos_angle = dot_product / (base_magnitude * lid_magnitude);
     
-    /* Calculate the dot product between normalized vectors */
-    double dot_product = cmxd_calculate_dot_product(base_norm[0], base_norm[1], base_norm[2],
-                                                   lid_norm[0], lid_norm[1], lid_norm[2]);
+    /* Clamp to valid range to avoid numerical errors */
+    cos_angle = cmxd_clamp(cos_angle, -1.0, 1.0);
     
-    /* Clamp to valid range to avoid numerical errors in acos() */
-    dot_product = cmxd_clamp(dot_product, -1.0, 1.0);
+    /* Convert to degrees (0-180°) */
+    double angle = acos(cos_angle) * 180.0 / M_PI;
     
-    /* Convert to degrees - reliable 0-180° range */
-    double angle = acos(dot_product) * 180.0 / M_PI;
-    
-    debug_log("Hinge calculation (simple): base[%d,%d,%d] lid[%d,%d,%d] -> dot=%.3f, angle=%.1f°", 
-             base->x, base->y, base->z, lid->x, lid->y, lid->z, dot_product, angle);
+    debug_log("Hinge angle: base[%.2f,%.2f,%.2f] lid[%.2f,%.2f,%.2f] cos=%.3f -> %.1f°", 
+             base_x, base_y, base_z, lid_x, lid_y, lid_z, cos_angle, angle);
     
     return angle;
 }
 
-/*
- * =============================================================================
- * GRAVITY-AWARE COORDINATE TRANSFORMATION
- * =============================================================================
- */
-
-/* Transform accelerometer reading to standard coordinate frame based on gravity direction */
-static void transform_to_standard_frame(double x, double y, double z, int gravity_orientation, 
-                                       double *std_x, double *std_y, double *std_z)
+/* Calculate full 0-360° hinge angle by considering laptop orientation */
+double cmxd_calculate_hinge_angle_360(const struct cmxd_accel_sample *base, const struct cmxd_accel_sample *lid,
+                                     double base_scale, double lid_scale)
 {
-    /* Standard frame: X=forward/back, Y=left/right, Z=up/down (gravity down = +Z) */
-    switch (gravity_orientation) {
-        case 0: /* X_DOWN - normal orientation, X points to gravity */
-            *std_x = x;
-            *std_y = y; 
-            *std_z = z;
-            break;
-        case 1: /* X_UP - upside down, X points away from gravity */
-            *std_x = -x;
-            *std_y = -y;
-            *std_z = -z;
-            break;
-        case 2: /* Y_DOWN - left side down, Y points to gravity */
-            *std_x = -y;  /* old Y becomes -X */
-            *std_y = x;   /* old X becomes Y */
-            *std_z = z;   /* Z unchanged */
-            break;
-        case 3: /* Y_UP - right side down, Y points away from gravity */
-            *std_x = y;   /* old Y becomes X */
-            *std_y = -x;  /* old X becomes -Y */
-            *std_z = z;   /* Z unchanged */
-            break;
-        case 4: /* Z_DOWN - lying flat face down */
-            *std_x = x;
-            *std_y = y;
-            *std_z = -z;  /* Flip Z */
-            break;
-        case 5: /* Z_UP - lying flat face up */
-        default:
-            *std_x = x;
-            *std_y = y;
-            *std_z = z;   /* Keep as-is */
-            break;
-    }
-}
-
-/* Detect gravity orientation for a sensor reading */
-static int detect_gravity_orientation(double x, double y, double z)
-{
-    double abs_x = fabs(x);
-    double abs_y = fabs(y);
-    double abs_z = fabs(z);
+    /* First get the basic 0-180° angle */
+    double base_angle = cmxd_calculate_hinge_angle(base, lid, base_scale, lid_scale);
     
-    /* Find the axis with the largest magnitude (closest to gravity) */
-    if (abs_z > abs_x && abs_z > abs_y) {
-        return (z > 0) ? 5 : 4;  /* Z_UP : Z_DOWN */
-    } else if (abs_y > abs_x) {
-        return (y > 0) ? 3 : 2;  /* Y_UP : Y_DOWN */
+    if (base_angle < 0) {
+        return base_angle; /* Error case */
+    }
+    
+    /* Convert raw values to m/s² for analysis using provided scale factors */
+    double base_x = base->x * base_scale;
+    double base_y = base->y * base_scale;
+    double base_z = base->z * base_scale;
+    
+    double lid_x = lid->x * lid_scale;
+    double lid_y = lid->y * lid_scale;
+    double lid_z = lid->z * lid_scale;
+    
+    /* Calculate the cross product to determine hinge direction */
+    /* Cross product base × lid gives us the hinge axis direction */
+    double cross_x = base_y * lid_z - base_z * lid_y;
+    double cross_y = base_z * lid_x - base_x * lid_z;
+    double cross_z = base_x * lid_y - base_y * lid_x;
+    
+    /* Use the Y component of cross product to determine fold direction */
+    /* When laptop opens normally: cross_y should be positive */
+    /* When folding back (tent/tablet): cross_y becomes negative */
+    
+    double angle_360;
+    
+    /* Check if we're in the "folded back" region (tent/tablet modes) */
+    /* 
+     * Use cross product Y-component to detect fold direction.
+     * When opening normally (0-180°): cross_y > 0
+     * When folding back (180-360°): cross_y < 0
+     * 
+     * Add hysteresis to prevent rapid oscillation near 180°
+     */
+    
+    bool is_folded_back;
+    static bool was_folded_back = false;
+    
+    if (was_folded_back) {
+        /* Currently in fold-back mode - need cross_y clearly positive to exit */
+        is_folded_back = (cross_y < 5.0);
     } else {
-        return (x > 0) ? 1 : 0;  /* X_UP : X_DOWN */
-    }
-}
-
-/* Public interface for gravity orientation detection */
-int cmxd_detect_gravity_orientation(double x, double y, double z)
-{
-    return detect_gravity_orientation(x, y, z);
-}
-
-/* Calculate full 0-360° hinge angle from base and lid accelerometer readings */
-/* Uses orientation-independent calculation to find angle between sensor mounting planes */
-double cmxd_calculate_hinge_angle_360(const struct cmxd_accel_sample *base, const struct cmxd_accel_sample *lid)
-{
-    /* Convert raw accelerometer values to normalized vectors */
-    double base_magnitude = cmxd_calculate_magnitude((double)base->x, (double)base->y, (double)base->z);
-    double lid_magnitude = cmxd_calculate_magnitude((double)lid->x, (double)lid->y, (double)lid->z);
-    
-    if (base_magnitude < 1.0 || lid_magnitude < 1.0) {
-        debug_log("Invalid accelerometer readings: base_mag=%.3f, lid_mag=%.3f", base_magnitude, lid_magnitude);
-        return -1.0; /* Invalid reading */
-    }
-
-    /* Normalize the raw vectors */
-    double base_norm[3] = {
-        base->x / base_magnitude,
-        base->y / base_magnitude, 
-        base->z / base_magnitude
-    };
-    
-    double lid_norm[3] = {
-        lid->x / lid_magnitude,
-        lid->y / lid_magnitude,
-        lid->z / lid_magnitude
-    };
-    
-    /* Calculate estimated gravity direction (average of both sensors) */
-    double gravity[3] = {
-        (base_norm[0] + lid_norm[0]) / 2.0,
-        (base_norm[1] + lid_norm[1]) / 2.0,
-        (base_norm[2] + lid_norm[2]) / 2.0
-    };
-    double gravity_mag = cmxd_calculate_magnitude(gravity[0], gravity[1], gravity[2]);
-    if (gravity_mag > 0.1) {
-        gravity[0] /= gravity_mag;
-        gravity[1] /= gravity_mag;
-        gravity[2] /= gravity_mag;
+        /* Currently in normal mode - need cross_y clearly negative to enter fold-back */
+        is_folded_back = (cross_y < -5.0);
     }
     
-    /* Project both sensor vectors onto the plane perpendicular to gravity */
-    /* Projection formula: v_projected = v - (v · gravity) * gravity */
-    double base_dot_gravity = cmxd_calculate_dot_product(base_norm[0], base_norm[1], base_norm[2],
-                                                        gravity[0], gravity[1], gravity[2]);
-    double lid_dot_gravity = cmxd_calculate_dot_product(lid_norm[0], lid_norm[1], lid_norm[2],
-                                                       gravity[0], gravity[1], gravity[2]);
+    was_folded_back = is_folded_back;
     
-    double base_projected[3] = {
-        base_norm[0] - base_dot_gravity * gravity[0],
-        base_norm[1] - base_dot_gravity * gravity[1],
-        base_norm[2] - base_dot_gravity * gravity[2]
-    };
-    
-    double lid_projected[3] = {
-        lid_norm[0] - lid_dot_gravity * gravity[0],
-        lid_norm[1] - lid_dot_gravity * gravity[1],
-        lid_norm[2] - lid_dot_gravity * gravity[2]
-    };
-    
-    /* Normalize the projected vectors */
-    double base_proj_mag = cmxd_calculate_magnitude(base_projected[0], base_projected[1], base_projected[2]);
-    double lid_proj_mag = cmxd_calculate_magnitude(lid_projected[0], lid_projected[1], lid_projected[2]);
-    
-    if (base_proj_mag < 0.1 || lid_proj_mag < 0.1) {
-        /* Projected vectors too small - both sensors mostly aligned with gravity */
-        /* Fall back to a simplified approach using the difference between sensor vectors */
-        double diff[3] = {
-            base_norm[0] - lid_norm[0],
-            base_norm[1] - lid_norm[1], 
-            base_norm[2] - lid_norm[2]
-        };
-        double diff_mag = cmxd_calculate_magnitude(diff[0], diff[1], diff[2]);
-        
-        /* Convert difference magnitude to an approximate angle */
-        /* When sensors are identical (diff=0), angle=0° */
-        /* When sensors are perpendicular (diff=sqrt(2)≈1.414), angle=90° */
-        /* When sensors are opposite (diff=2), angle=180° */
-        double angle = 2.0 * asin(cmxd_clamp(diff_mag / 2.0, 0.0, 1.0)) * 180.0 / M_PI;
-        
-        debug_log("Fallback hinge calculation: base[%d,%d,%d] lid[%d,%d,%d] diff_mag=%.3f -> angle=%.1f°",
-                 base->x, base->y, base->z, lid->x, lid->y, lid->z, diff_mag, angle);
-        
-        return angle;
+    if (is_folded_back) {
+        /* We're in the "folded back" region - convert to 180-360° range */
+        angle_360 = 360.0 - base_angle;
+        debug_log("Folded back mode: base_z=%.2f lid_z=%.2f cross_y=%.3f base_angle=%.1f° -> 360°-angle=%.1f°", 
+                 base_z, lid_z, cross_y, base_angle, angle_360);
+    } else {
+        /* Normal opening range 0-180° */
+        angle_360 = base_angle;
+        debug_log("Normal opening: base_z=%.2f lid_z=%.2f cross_y=%.3f -> %.1f°", 
+                 base_z, lid_z, cross_y, angle_360);
     }
     
-    base_projected[0] /= base_proj_mag;
-    base_projected[1] /= base_proj_mag;
-    base_projected[2] /= base_proj_mag;
+    /* Alternative method using cross product magnitude for validation */
+    double cross_magnitude = sqrt(cross_x*cross_x + cross_y*cross_y + cross_z*cross_z);
     
-    lid_projected[0] /= lid_proj_mag;
-    lid_projected[1] /= lid_proj_mag;
-    lid_projected[2] /= lid_proj_mag;
+    debug_log("Hinge 360°: base[%.2f,%.2f,%.2f] lid[%.2f,%.2f,%.2f] cross_y=%.3f cross_mag=%.3f base_angle=%.1f° -> %.1f°", 
+             base_x, base_y, base_z, lid_x, lid_y, lid_z, cross_y, cross_magnitude, base_angle, angle_360);
     
-    /* Calculate the angle between the projected vectors */
-    double dot_product = cmxd_calculate_dot_product(base_projected[0], base_projected[1], base_projected[2],
-                                                   lid_projected[0], lid_projected[1], lid_projected[2]);
-    
-    /* Clamp to valid range to avoid numerical errors in acos() */
-    dot_product = cmxd_clamp(dot_product, -1.0, 1.0);
-    
-    double projected_angle = acos(dot_product) * 180.0 / M_PI;
-    
-    /* For hinge angle calculation, when projected vectors are opposite (180°), 
-     * this represents a 90° hinge opening. When they're identical (0°), 
-     * this represents either 0° (closed) or 180° (flat) hinge opening.
-     * So the actual hinge angle is: 180° - projected_angle */
-    double angle = 180.0 - projected_angle;
-    
-    debug_log("Gravity-independent hinge calculation: base[%d,%d,%d] lid[%d,%d,%d] gravity=[%.3f,%.3f,%.3f] base_proj=[%.3f,%.3f,%.3f] lid_proj=[%.3f,%.3f,%.3f] dot=%.3f projected_angle=%.1f° -> hinge_angle=%.1f°",
-             base->x, base->y, base->z, lid->x, lid->y, lid->z,
-             gravity[0], gravity[1], gravity[2],
-             base_projected[0], base_projected[1], base_projected[2],
-             lid_projected[0], lid_projected[1], lid_projected[2],
-             dot_product, projected_angle, angle);
-    
-    return angle;
+    return angle_360;
 }

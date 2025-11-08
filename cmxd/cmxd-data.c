@@ -74,6 +74,32 @@ int cmxd_safe_fclose(FILE *f, const char *path)
  * =============================================================================
  */
 
+/* Read accelerometer scale factor from IIO device */
+double cmxd_read_accel_scale(const char *device_name)
+{
+    char scale_path[PATH_MAX];
+    FILE *fp;
+    double scale = 0.0;
+    
+    snprintf(scale_path, sizeof(scale_path), 
+             "/sys/bus/iio/devices/%s/in_accel_scale", device_name);
+    
+    fp = cmxd_safe_fopen(scale_path, "r");
+    if (fp) {
+        if (fscanf(fp, "%lf", &scale) != 1) {
+            log_warn("Failed to read scale from %s", scale_path);
+            scale = 0.0;
+        } else {
+            log_debug("Read scale %f from %s", scale, device_name);
+        }
+        cmxd_safe_fclose(fp, scale_path);
+    } else {
+        log_warn("Failed to open scale file %s", scale_path);
+    }
+    
+    return scale;
+}
+
 /* Apply scale factor and convert to microunits */
 void cmxd_apply_scale(int raw_x, int raw_y, int raw_z, double scale,
                       int *scaled_x, int *scaled_y, int *scaled_z)

@@ -55,6 +55,8 @@ void cmxd_data_init(struct cmxd_data_config *config, log_func_t log_function);
 FILE *cmxd_safe_fopen(const char *path, const char *mode);
 int cmxd_safe_fclose(FILE *f, const char *path);
 
+double cmxd_read_accel_scale(const char *device_name);
+
 void cmxd_apply_scale(int raw_x, int raw_y, int raw_z, double scale,
                       int *scaled_x, int *scaled_y, int *scaled_z);
 

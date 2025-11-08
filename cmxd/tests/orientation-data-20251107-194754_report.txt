@@ -1,0 +1,96 @@
+CHUWI MINIBOOK X ACCELEROMETER ANALYSIS REPORT
+==================================================
+
+Analysis performed on: 2025-11-07 20:09:49.537773
+Data source: orientation-data-20251107-194754.log
+
+DEVICE CONFIGURATION
+--------------------
+
+Device0:
+  Mount Matrix:
+    [1. 0. 0.]
+    [0. 1. 0.]
+    [0. 0. 1.]
+  Scale: 0.009582
+  Available Scales: [0.009582, 0.019164, 0.038329]
+
+Device1:
+  Mount Matrix:
+    [ 0. -1.  0.]
+    [1. 0. 0.]
+    [0. 0. 1.]
+  Scale: 0.009582
+  Available Scales: [0.009582, 0.019164, 0.038329]
+
+
+ANALYSIS SUMMARY
+----------------
+
+1. SENSOR IDENTIFICATION:
+   Device0 = BASE (more stable in normal position)
+   Device1 = LID
+
+2. MOUNT MATRIX VALIDATION:
+   Device0: Valid rotation matrix (det=1.000)
+   Device1: Valid rotation matrix (det=1.000)
+
+3. SCALE FACTOR UTILITY:
+   Scale factors convert raw ADC values to m/s²
+   Essential for meaningful gravity calculations
+
+
+DETAILED POSITION DATA
+---------------------
+
+laptop_normal_135deg:
+  Device0: magnitude=9.08, dominant=X (-8.24)
+  Device1: magnitude=12.86, dominant=Z (-12.86)
+
+laptop_upside_down_135deg:
+  Device0: magnitude=10.48, dominant=X (8.15)
+  Device1: magnitude=6.60, dominant=Z (6.57)
+
+laptop_left_side_135deg:
+  Device0: magnitude=9.81, dominant=Y (9.68)
+  Device1: magnitude=10.26, dominant=X (-9.82)
+
+laptop_right_side_135deg:
+  Device0: magnitude=9.87, dominant=Y (-9.77)
+  Device1: magnitude=10.35, dominant=X (9.88)
+
+laptop_tilted_forward_135deg:
+  Device0: magnitude=11.30, dominant=Z (-10.28)
+  Device1: magnitude=10.35, dominant=Y (9.84)
+
+laptop_tilted_backward_135deg:
+  Device0: magnitude=7.92, dominant=Z (7.92)
+  Device1: magnitude=11.51, dominant=Z (-8.30)
+
+laptop_rotated_45deg_left_135deg:
+  Device0: magnitude=9.33, dominant=Y (7.04)
+  Device1: magnitude=12.16, dominant=Z (-9.99)
+
+laptop_rotated_45deg_right_135deg:
+  Device0: magnitude=9.37, dominant=Y (-7.17)
+  Device1: magnitude=11.96, dominant=Z (-9.55)
+
+flat_screen_up:
+  Device0: magnitude=8.13, dominant=Z (8.12)
+  Device1: magnitude=12.98, dominant=Z (-12.97)
+
+flat_screen_down:
+  Device0: magnitude=11.46, dominant=Z (-11.45)
+  Device1: magnitude=6.61, dominant=Z (6.61)
+
+tent_mode:
+  Device0: magnitude=9.31, dominant=X (9.12)
+  Device1: magnitude=11.23, dominant=Y (9.24)
+
+tablet_mode_screen_up:
+  Device0: magnitude=7.99, dominant=Z (7.99)
+  Device1: magnitude=6.52, dominant=Z (6.52)
+
+tablet_mode_screen_down:
+  Device0: magnitude=11.71, dominant=Z (-11.71)
+  Device1: magnitude=13.03, dominant=Z (-13.03)

@@ -71,11 +71,11 @@ static const char * const lid_sensor_mount_matrix[] = {
 	"0", "0", "1"     /* Z' = Z  (no rotation)  */
 };
 
-/* Base sensor mount matrix (90° CW rotation) */  
+/* Base sensor mount matrix (90° CW rotation + Z inversion) */  
 static const char * const base_sensor_mount_matrix[] = {
 	"0", "-1", "0",   /* X' = -Y (laptop right = sensor front) */
 	"1", "0", "0",    /* Y' = X  (laptop back = sensor right)  */
-	"0", "0", "1"     /* Z' = Z  (laptop up = sensor up)       */
+	"0", "0", "-1"    /* Z' = -Z (laptop up = sensor DOWN)     */
 };
 
 /* Property entries for lid sensor */

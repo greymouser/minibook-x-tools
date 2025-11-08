@@ -1,0 +1,97 @@
+CHUWI MINIBOOK X ACCELEROMETER ANALYSIS REPORT
+==================================================
+
+Analysis performed on: 2025-11-07 21:54:34.687314
+Data source: orientation-data-20251107-214534.log
+
+DEVICE CONFIGURATION
+--------------------
+
+Lid Device:
+  Mount Matrix:
+    [1. 0. 0.]
+    [0. 1. 0.]
+    [0. 0. 1.]
+  Scale: 0.009582
+  Available Scales: [0.009582, 0.019164, 0.038329]
+
+Base Device:
+  Mount Matrix:
+    [ 0. -1.  0.]
+    [1. 0. 0.]
+    [0. 0. 1.]
+  Scale: 0.009582
+  Available Scales: [0.009582, 0.019164, 0.038329]
+
+
+ANALYSIS SUMMARY
+----------------
+
+1. SENSOR IDENTIFICATION:
+   Lid device: magnitude = 9.0
+   Base device: magnitude = 12.8
+   (Assignment determined by cmx driver)
+
+2. MOUNT MATRIX VALIDATION:
+   Lid Device: Valid rotation matrix (det=1.000)
+   Base Device: Valid rotation matrix (det=1.000)
+
+3. SCALE FACTOR UTILITY:
+   Scale factors convert raw ADC values to m/s²
+   Essential for meaningful gravity calculations
+
+
+DETAILED POSITION DATA
+---------------------
+
+laptop_normal_135deg:
+  Lid: magnitude=9.00, dominant=X (-8.08)
+  Base: magnitude=12.80, dominant=Z (-12.80)
+
+laptop_upside_down_135deg:
+  Lid: magnitude=10.60, dominant=X (7.62)
+  Base: magnitude=6.66, dominant=Z (6.56)
+
+laptop_left_side_135deg:
+  Lid: magnitude=9.79, dominant=Y (9.67)
+  Base: magnitude=10.27, dominant=X (-9.81)
+
+laptop_right_side_135deg:
+  Lid: magnitude=9.84, dominant=Y (-9.75)
+  Base: magnitude=10.48, dominant=X (9.85)
+
+laptop_tilted_forward_135deg:
+  Lid: magnitude=11.24, dominant=Z (-10.06)
+  Base: magnitude=10.44, dominant=Y (9.82)
+
+laptop_tilted_backward_135deg:
+  Lid: magnitude=8.09, dominant=Z (8.09)
+  Base: magnitude=11.46, dominant=Y (-8.17)
+
+laptop_rotated_45deg_left_135deg:
+  Lid: magnitude=9.27, dominant=Y (6.84)
+  Base: magnitude=12.28, dominant=Z (-10.26)
+
+laptop_rotated_45deg_right_135deg:
+  Lid: magnitude=9.33, dominant=X (-6.58)
+  Base: magnitude=12.24, dominant=Z (-10.45)
+
+flat_screen_up:
+  Lid: magnitude=8.07, dominant=Z (8.05)
+  Base: magnitude=12.97, dominant=Z (-12.96)
+
+flat_screen_down:
+  Lid: magnitude=11.46, dominant=Z (-11.45)
+  Base: magnitude=6.51, dominant=Z (6.50)
+
+tent_mode:
+  Lid: magnitude=9.40, dominant=X (9.31)
+  Base: magnitude=11.17, dominant=Y (9.35)
+
+tablet_mode_screen_up:
+  Lid: magnitude=7.99, dominant=Z (7.99)
+  Base: magnitude=6.47, dominant=Z (6.47)
+
+tablet_mode_screen_down:
+  Lid: magnitude=11.74, dominant=Z (-11.74)
+  Base: magnitude=12.98, dominant=Z (-12.98)

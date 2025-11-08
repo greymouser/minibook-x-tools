@@ -232,6 +232,7 @@ static int run_main_loop(void)
     const unsigned int max_errors = 10;
     int poll_timeout = cfg.buffer_timeout_ms; /* Use configured buffer timeout for poll() */
     int base_valid = 0, lid_valid = 0;
+    double base_scale, lid_scale;
     
     /* Ensure IIO trigger exists (create if needed, but leave persistent) */
     log_debug("Ensuring IIO trigger is available...");
@@ -253,6 +254,22 @@ static int run_main_loop(void)
         cmxd_cleanup_iio_buffer(&base_buf);
         return -1;
     }
+    
+    /* Read scale factors for both devices */
+    base_scale = cmxd_read_accel_scale(cfg.base_dev);
+    lid_scale = cmxd_read_accel_scale(cfg.lid_dev);
+    
+    if (base_scale <= 0.0) {
+        log_warn("Invalid base scale %f, using default 0.009582", base_scale);
+        base_scale = 0.009582;
+    }
+    
+    if (lid_scale <= 0.0) {
+        log_warn("Invalid lid scale %f, using default 0.009582", lid_scale);
+        lid_scale = 0.009582;
+    }
+    
+    log_info("Using scales: base=%f, lid=%f", base_scale, lid_scale);
     
     /* Setup poll file descriptors */
     poll_fds[0].fd = base_buf.buffer_fd;
@@ -291,8 +308,8 @@ static int run_main_loop(void)
                 log_warn("Base read error %u/%u", error_count, max_errors);
                 continue;
             } else if (result > 0) {
-                /* Apply scaling - use fixed scale for now since IIO buffer data is already scaled */
-                cmxd_apply_scale(base_sample.x, base_sample.y, base_sample.z, 1.0, 
+                /* Apply actual scaling factor */
+                cmxd_apply_scale(base_sample.x, base_sample.y, base_sample.z, base_scale, 
                            &base_xs, &base_ys, &base_zs);
                 
                 log_debug("Base: X=%d, Y=%d, Z=%d", base_sample.x, base_sample.y, base_sample.z);
@@ -322,8 +339,8 @@ static int run_main_loop(void)
                 log_warn("Lid read error %u/%u", error_count, max_errors);
                 continue;
             } else if (result > 0) {
-                /* Apply scaling - use fixed scale for now since IIO buffer data is already scaled */
-                cmxd_apply_scale(lid_sample.x, lid_sample.y, lid_sample.z, 1.0,
+                /* Apply actual scaling factor */
+                cmxd_apply_scale(lid_sample.x, lid_sample.y, lid_sample.z, lid_scale,
                            &lid_xs, &lid_ys, &lid_zs);
                 
                 log_debug("Lid: X=%d, Y=%d, Z=%d", lid_sample.x, lid_sample.y, lid_sample.z);
@@ -359,7 +376,7 @@ static int run_main_loop(void)
             };
             
             /* Calculate hinge angle for mode detection using 0-360° system */
-            double hinge_angle = cmxd_calculate_hinge_angle_360(&base_calc_sample, &lid_calc_sample);
+            double hinge_angle = cmxd_calculate_hinge_angle_360(&base_calc_sample, &lid_calc_sample, base_scale, lid_scale);
             
             /* Calculate tilt angle for orientation display */
             double tilt_angle = cmxd_calculate_tilt_angle(lid_sample.x, lid_sample.y, lid_sample.z);
