@@ -31,11 +31,47 @@ const double CMXD_MODE_FLAT_MAX = 240.0;
 const double CMXD_MODE_TENT_MAX = 330.0;        
 const double CMXD_MODE_TABLET_MAX = 360.0;      
 
-/* Simple hysteresis to prevent mode jitter */
+/* Simple hysteresis to prevent mode jitter - keep around 10°±5° */
 const double CMXD_MODE_HYSTERESIS = 10.0;
 
 /* Require a few stable readings before mode change */
 const int CMXD_MODE_STABILITY_SAMPLES = 3;
+
+/* Mode sequence for preventing jumps */
+static const char* mode_sequence[] = {
+    CMXD_PROTOCOL_MODE_CLOSING,
+    CMXD_PROTOCOL_MODE_LAPTOP,
+    CMXD_PROTOCOL_MODE_FLAT,
+    CMXD_PROTOCOL_MODE_TENT,
+    CMXD_PROTOCOL_MODE_TABLET
+};
+static const int mode_sequence_length = sizeof(mode_sequence) / sizeof(mode_sequence[0]);
+
+/* Get mode index in sequence */
+static int get_mode_index(const char* mode)
+{
+    if (!mode) return 1; /* Default to laptop */
+    
+    for (int i = 0; i < mode_sequence_length; i++) {
+        if (strcmp(mode, mode_sequence[i]) == 0) {
+            return i;
+        }
+    }
+    return 1; /* Default to laptop if not found */
+}
+
+/* Check if mode transition is allowed (prevents jumping) */
+static bool is_mode_transition_allowed(const char* from_mode, const char* to_mode)
+{
+    if (!from_mode || !to_mode) return true;
+    
+    int from_idx = get_mode_index(from_mode);
+    int to_idx = get_mode_index(to_mode);
+    
+    /* Allow adjacent transitions or staying in same mode */
+    int diff = abs(to_idx - from_idx);
+    return (diff <= 1);
+}
 
 /* Not needed with reliable mount matrices */
 const int CMXD_ORIENTATION_FREEZE_DURATION = 0;
@@ -100,28 +136,35 @@ const char* cmxd_get_device_mode(double angle, const char* current_mode_param)
         new_mode = CMXD_PROTOCOL_MODE_TABLET;
     }
     
-    /* Apply simple hysteresis if we have a current mode */
+    /* Apply enhanced mode transition logic */
     if (current_mode_param) {
-        double hysteresis = CMXD_MODE_HYSTERESIS;
-        
-        /* Check if we need hysteresis to prevent mode flipping */
-        if (strcmp(current_mode_param, new_mode) != 0) {
-            /* Mode would change - check if we're near a boundary */
-            if ((strcmp(new_mode, CMXD_PROTOCOL_MODE_LAPTOP) == 0 && strcmp(current_mode_param, CMXD_PROTOCOL_MODE_CLOSING) == 0)) {
-                if (angle < CMXD_MODE_CLOSING_MAX + hysteresis) {
-                    new_mode = current_mode_param;  /* Stay in current mode */
-                }
-            } else if ((strcmp(new_mode, CMXD_PROTOCOL_MODE_FLAT) == 0 && strcmp(current_mode_param, CMXD_PROTOCOL_MODE_LAPTOP) == 0)) {
-                if (angle < CMXD_MODE_LAPTOP_MAX + hysteresis) {
-                    new_mode = current_mode_param;
-                }
-            } else if ((strcmp(new_mode, CMXD_PROTOCOL_MODE_TENT) == 0 && strcmp(current_mode_param, CMXD_PROTOCOL_MODE_FLAT) == 0)) {
-                if (angle < CMXD_MODE_FLAT_MAX + hysteresis) {
-                    new_mode = current_mode_param;
-                }
-            } else if ((strcmp(new_mode, CMXD_PROTOCOL_MODE_TABLET) == 0 && strcmp(current_mode_param, CMXD_PROTOCOL_MODE_TENT) == 0)) {
-                if (angle < CMXD_MODE_TENT_MAX + hysteresis) {
-                    new_mode = current_mode_param;
+        /* First check if transition is allowed (prevents jumping) */
+        if (!is_mode_transition_allowed(current_mode_param, new_mode)) {
+            debug_log("Mode jump prevented: %s -> %s (not adjacent)", current_mode_param, new_mode);
+            new_mode = current_mode_param;  /* Stay in current mode */
+        } else {
+            /* Transition is allowed - apply hysteresis */
+            double hysteresis = CMXD_MODE_HYSTERESIS;
+            
+            /* Check if we need hysteresis to prevent mode flipping */
+            if (strcmp(current_mode_param, new_mode) != 0) {
+                /* Mode would change - check if we're near a boundary */
+                if ((strcmp(new_mode, CMXD_PROTOCOL_MODE_LAPTOP) == 0 && strcmp(current_mode_param, CMXD_PROTOCOL_MODE_CLOSING) == 0)) {
+                    if (angle < CMXD_MODE_CLOSING_MAX + hysteresis) {
+                        new_mode = current_mode_param;  /* Stay in current mode */
+                    }
+                } else if ((strcmp(new_mode, CMXD_PROTOCOL_MODE_FLAT) == 0 && strcmp(current_mode_param, CMXD_PROTOCOL_MODE_LAPTOP) == 0)) {
+                    if (angle < CMXD_MODE_LAPTOP_MAX + hysteresis) {
+                        new_mode = current_mode_param;
+                    }
+                } else if ((strcmp(new_mode, CMXD_PROTOCOL_MODE_TENT) == 0 && strcmp(current_mode_param, CMXD_PROTOCOL_MODE_FLAT) == 0)) {
+                    if (angle < CMXD_MODE_FLAT_MAX + hysteresis) {
+                        new_mode = current_mode_param;
+                    }
+                } else if ((strcmp(new_mode, CMXD_PROTOCOL_MODE_TABLET) == 0 && strcmp(current_mode_param, CMXD_PROTOCOL_MODE_TENT) == 0)) {
+                    if (angle < CMXD_MODE_TENT_MAX + hysteresis) {
+                        new_mode = current_mode_param;
+                    }
                 }
             }
         }

@@ -143,23 +143,29 @@ const char* cmxd_get_orientation_with_tablet_protection(double x, double y, doub
     return orientation_name;
 }
 
-/* Get orientation with dual-sensor switching (enhanced for tablet mode) */
-/* Uses actual device mode to switch between lid sensor and base sensor calculations */
+/* Get orientation with dual-sensor switching (enhanced for mode-specific protection) */
+/* Uses actual device mode to switch between sensors and apply mode-specific orientation locking */
 const char* cmxd_get_orientation_with_sensor_switching(double lid_x, double lid_y, double lid_z,
                                                       double base_x, double base_y, double base_z,
                                                       const char* current_mode)
 {    
     const char* orientation_name;
     
-    /* Only use tablet-specific orientation method in actual tablet mode */
-    if (current_mode && (strcmp(current_mode, CMXD_PROTOCOL_MODE_TABLET) == 0 || strcmp(current_mode, CMXD_PROTOCOL_MODE_TENT) == 0)) {
-        /* Tablet/Tent mode: Use base sensor direct orientation with tablet protection */
+    /* Mode-specific orientation handling */
+    if (current_mode && strcmp(current_mode, CMXD_PROTOCOL_MODE_LAPTOP) == 0) {
+        /* Laptop mode: ALWAYS landscape - ignore device rotation */
+        return CMXD_PROTOCOL_ORIENTATION_LANDSCAPE;
         
-        /* Get base sensor orientation with tablet protection */
+    } else if (current_mode && strcmp(current_mode, CMXD_PROTOCOL_MODE_CLOSING) == 0) {
+        /* Closing mode: ALWAYS landscape - device is closing/opening */
+        return CMXD_PROTOCOL_ORIENTATION_LANDSCAPE;
+        
+    } else if (current_mode && (strcmp(current_mode, CMXD_PROTOCOL_MODE_TABLET) == 0 || strcmp(current_mode, CMXD_PROTOCOL_MODE_TENT) == 0)) {
+        /* Tablet/Tent mode: Use base sensor with tablet protection */
         orientation_name = cmxd_get_orientation_with_tablet_protection(base_x, base_y, base_z, current_mode);
         
     } else {
-        /* Non-tablet mode: Use simple lid-based orientation */
+        /* Flat mode: Allow natural orientation detection using lid sensor */
         orientation_name = cmxd_get_orientation_simple(lid_x, lid_y, lid_z);
     }
     

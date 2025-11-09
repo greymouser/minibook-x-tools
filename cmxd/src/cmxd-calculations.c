@@ -140,6 +140,79 @@ static void debug_log(const char *fmt, ...)
 
 /*
  * =============================================================================
+ * DEVICE TILT COMPENSATION
+ * =============================================================================
+ */
+
+/* Detect if device is being tilted (rotated as a whole unit) vs hinge movement */
+bool cmxd_detect_device_rotation(const struct cmxd_accel_sample *base, const struct cmxd_accel_sample *lid,
+                                double base_scale, double lid_scale)
+{
+    /* Convert to m/s² */
+    double base_x = base->x * base_scale;
+    double base_y = base->y * base_scale;
+    double base_z = base->z * base_scale;
+    
+    double lid_x = lid->x * lid_scale;
+    double lid_y = lid->y * lid_scale;
+    double lid_z = lid->z * lid_scale;
+    
+    /* Calculate tilt angles for both sensors */
+    double base_tilt = cmxd_calculate_tilt_angle(base_x, base_y, base_z);
+    double lid_tilt = cmxd_calculate_tilt_angle(lid_x, lid_y, lid_z);
+    
+    /* If both sensors show significant tilt from horizontal, device is being rotated */
+    /* Typical laptop use: base ~0-30° tilt, lid ~45-90° tilt */
+    /* Device rotation: both sensors show unusual tilt angles */
+    bool base_tilted = (base_tilt > 35.0);  /* Base unusually tilted */
+    bool lid_tilted = (lid_tilt < 20.0 || lid_tilt > 85.0);  /* Lid flat or too vertical */
+    
+    return (base_tilted && lid_tilted);
+}
+
+/* Gravity-compensated hinge angle calculation */
+/* Attempts to get truer hinge angle by compensating for device tilt */
+double cmxd_calculate_gravity_compensated_hinge_angle(const struct cmxd_accel_sample *base, const struct cmxd_accel_sample *lid,
+                                                     double base_scale, double lid_scale)
+{
+    /* First check if device appears to be rotated as a unit */
+    if (cmxd_detect_device_rotation(base, lid, base_scale, lid_scale)) {
+        /* Device is being rotated - try to compensate by projecting vectors onto expected planes */
+        debug_log("Device rotation detected - applying gravity compensation");
+        
+        /* Convert to m/s² */
+        double base_x = base->x * base_scale;
+        double base_y = base->y * base_scale;
+        double base_z = base->z * base_scale;
+        
+        double lid_x = lid->x * lid_scale;
+        double lid_y = lid->y * lid_scale;
+        double lid_z = lid->z * lid_scale;
+        
+        /* Try to project onto expected hinge plane (Y-axis is hinge axis) */
+        /* Focus on X-Z plane components which represent the hinge opening */
+        double base_xz_mag = sqrt(base_x * base_x + base_z * base_z);
+        double lid_xz_mag = sqrt(lid_x * lid_x + lid_z * lid_z);
+        
+        if (base_xz_mag > 0.1 && lid_xz_mag > 0.1) {
+            /* Calculate angle in X-Z plane only */
+            double dot_xz = base_x * lid_x + base_z * lid_z;
+            double cos_angle = dot_xz / (base_xz_mag * lid_xz_mag);
+            cos_angle = cmxd_clamp(cos_angle, -1.0, 1.0);
+            
+            double compensated_angle = acos(cos_angle) * 180.0 / M_PI;
+            debug_log("Gravity compensation: raw=%.1f° -> compensated=%.1f°", 
+                     cmxd_calculate_hinge_angle(base, lid, base_scale, lid_scale), compensated_angle);
+            return compensated_angle;
+        }
+    }
+    
+    /* No compensation needed - use normal calculation */
+    return cmxd_calculate_hinge_angle(base, lid, base_scale, lid_scale);
+}
+
+/*
+ * =============================================================================
  * SIMPLIFIED HINGE ANGLE CALCULATIONS
  * =============================================================================
  */
@@ -189,8 +262,8 @@ double cmxd_calculate_hinge_angle(const struct cmxd_accel_sample *base, const st
 double cmxd_calculate_hinge_angle_360(const struct cmxd_accel_sample *base, const struct cmxd_accel_sample *lid,
                                      double base_scale, double lid_scale)
 {
-    /* First get the basic 0-180° angle */
-    double base_angle = cmxd_calculate_hinge_angle(base, lid, base_scale, lid_scale);
+    /* Use gravity-compensated calculation for better accuracy during transitions */
+    double base_angle = cmxd_calculate_gravity_compensated_hinge_angle(base, lid, base_scale, lid_scale);
     
     if (base_angle < 0) {
         return base_angle; /* Error case */

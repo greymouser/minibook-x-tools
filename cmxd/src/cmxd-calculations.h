@@ -13,6 +13,7 @@
 
 #include <math.h>
 #include <stdint.h>
+#include <stdbool.h>
 
 /* Accelerometer data sample structure */
 struct cmxd_accel_sample {
@@ -32,6 +33,12 @@ double cmxd_calculate_hinge_angle(const struct cmxd_accel_sample *base, const st
                                  double base_scale, double lid_scale);
 double cmxd_calculate_hinge_angle_360(const struct cmxd_accel_sample *base, const struct cmxd_accel_sample *lid,
                                      double base_scale, double lid_scale);
+
+/* Gravity-aware hinge calculations */
+bool cmxd_detect_device_rotation(const struct cmxd_accel_sample *base, const struct cmxd_accel_sample *lid,
+                                double base_scale, double lid_scale);
+double cmxd_calculate_gravity_compensated_hinge_angle(const struct cmxd_accel_sample *base, const struct cmxd_accel_sample *lid,
+                                                     double base_scale, double lid_scale);
 
 /* Utility functions */
 double cmxd_calculate_tilt_angle(double x, double y, double z);
