@@ -59,23 +59,26 @@ MODULE_PARM_DESC(enable_mount_matrix, "Enable automatic mount matrix transformat
 /**
  * Mount Matrix Definitions
  *
- * Based on sensor orientation analysis from SENSOR_CONFIGURATION.md:
- * - Lid sensor:  90° counter-clockwise rotation
- * - Base sensor: 90° clockwise rotation
+ * These matrices correct for the physical orientation differences between
+ * the two accelerometers in the Chuwi Minibook X convertible laptop.
+ * 
+ * Based on empirical sensor orientation analysis:
+ * - Lid sensor:  Identity matrix (no transformation needed)
+ * - Base sensor: 90° clockwise rotation + Z-axis inversion
  */
 
 /* Lid sensor mount matrix (identity - no rotation needed) */
 static const char * const lid_sensor_mount_matrix[] = {
-	"1", "0", "0",    /* X' = X  (no rotation)  */
-	"0", "1", "0",    /* Y' = Y  (no rotation)  */
-	"0", "0", "1"     /* Z' = Z  (no rotation)  */
+	"1", "0", "0",    /* X' = X  (identity transformation) */
+	"0", "1", "0",    /* Y' = Y  (identity transformation) */
+	"0", "0", "1"     /* Z' = Z  (identity transformation) */
 };
 
-/* Base sensor mount matrix (90° CW rotation + Z inversion) */  
+/* Base sensor mount matrix (90° clockwise rotation + Z-axis inversion) */  
 static const char * const base_sensor_mount_matrix[] = {
-	"0", "-1", "0",   /* X' = -Y (laptop right = sensor front) */
-	"1", "0", "0",    /* Y' = X  (laptop back = sensor right)  */
-	"0", "0", "-1"    /* Z' = -Z (laptop up = sensor DOWN)     */
+	"0", "-1", "0",   /* X' = -Y (90° CW rotation) */
+	"1", "0", "0",    /* Y' = X  (90° CW rotation) */
+	"0", "0", "-1"    /* Z' = -Z (Z-axis inversion) */
 };
 
 /* Property entries for lid sensor */
@@ -102,6 +105,9 @@ struct vec3 {
 
 /**
  * Global state variables for tablet mode detection
+ * 
+ * These maintain the current state of the convertible laptop's position
+ * and orientation for communication with the userspace daemon via sysfs.
  */
 
 /** @tm_input: Input device for tablet mode and orientation events */
@@ -110,10 +116,10 @@ static struct input_dev *tm_input;
 /** @tm_lock: Mutex protecting global state during operations */
 static DEFINE_MUTEX(tm_lock);
 
-/** @g_base: Current gravity vector from base accelerometer (laptop keyboard) */
+/** @g_base: Current gravity vector from base accelerometer (laptop keyboard, micro-g) */
 static struct vec3 g_base = { 0, 0, 1000000 };
 
-/** @g_lid: Current gravity vector from lid accelerometer (screen) */
+/** @g_lid: Current gravity vector from lid accelerometer (screen, micro-g) */
 static struct vec3 g_lid = { 0, 0, -1000000 };
 
 /**
@@ -132,16 +138,16 @@ static bool enable_events = true;
 /* Global driver context and device tracking */
 static struct cmx *g_chip;
 
-/* Driver state tracking for idempotent initialization */
+/* Driver state tracking to ensure idempotent initialization across module reloads */
 static bool driver_registered = false;
 static bool device_created = false;
 static DEFINE_MUTEX(driver_init_lock);
 
-/* Track software nodes applied to existing devices for cleanup (protected by driver_init_lock) */
+/* Track software nodes applied to existing devices for cleanup */
 static struct i2c_client *existing_lid_client = NULL;
 static struct i2c_client *existing_base_client = NULL;
 
-/* Track manually instantiated I2C devices for cleanup */
+/* Track manually instantiated I2C devices for cleanup during module exit */
 static struct i2c_client *instantiated_client = NULL;
 static struct i2c_client *instantiated_client2 = NULL;
 static int instantiated_bus = -1;
@@ -149,16 +155,16 @@ static int instantiated_addr = -1;
 static int instantiated_bus2 = -1;
 static int instantiated_addr2 = -1;
 
-/* Storage for unique software nodes to avoid sysfs conflicts */
+/* Storage for unique software nodes to avoid sysfs conflicts during module reloads */
 static struct software_node *current_lid_node = NULL;
 static struct software_node *current_base_node = NULL;
 
-/* Storage for discovered hardware locations */
+/* Storage for discovered hardware accelerometer locations during device detection */
 struct discovered_device_location {
-    int bus_nr;
-    int addr;
-    bool detected;
-    bool used;  /* Track if this location has been used for instantiation */
+    int bus_nr;        /* I2C bus number where device was found */
+    int addr;          /* I2C address where device was found */
+    bool detected;     /* Whether device was detected during hardware scan */
+    bool used;         /* Whether this location has been used for device instantiation */
 };
 
 static struct discovered_device_location discovered_devices[4];
@@ -817,10 +823,14 @@ static struct i2c_client *cmx_find_device_on_bus(int bus_nr, int addr)
 }
 
 /**
- * cmx_get_device_bus_info - Extract bus/address from working device
+ * cmx_get_device_bus_info - Extract I2C bus and address from device
+ * @dev: Device structure (must be an I2C client device)
+ * @bus_nr: Output parameter for I2C bus number  
+ * @addr: Output parameter for I2C device address
  * 
- * This function gets the actual bus and address information from a working
- * accelerometer device to avoid hardcoded assumptions.
+ * Helper function to extract bus and address information from an I2C device.
+ * Used for correlating discovered hardware with instantiated devices.
+ * Assumes device is an I2C client (no validation performed).
  */
 static void cmx_get_device_bus_info(struct device *dev, int *bus_nr, int *addr)
 {
@@ -888,6 +898,15 @@ static int cmx_scan_for_accelerometers(void)
 	return 0;
 }
 
+/**
+ * struct device_discovery_ctx - Context for device discovery iteration
+ * @base_dev: Pointer to discovered base (keyboard) accelerometer device
+ * @lid_dev: Pointer to discovered lid (screen) accelerometer device  
+ * @found_count: Number of valid accelerometer devices found so far
+ *
+ * Used by cmx_check_mxc4005_device() callback to collect device references
+ * during bus iteration. Maintains state across multiple callback invocations.
+ */
 struct device_discovery_ctx {
 	struct device *base_dev;
 	struct device *lid_dev;
@@ -895,7 +914,15 @@ struct device_discovery_ctx {
 };
 
 /**
- * cmx_check_mxc4005_device - Callback to check each I2C device
+ * cmx_check_mxc4005_device - Callback to identify MXC4005 accelerometer devices
+ * @dev: Device being examined during bus iteration
+ * @data: User data (struct device_discovery_ctx pointer)
+ *
+ * Callback function for bus_for_each_dev() that examines each device to
+ * determine if it's a valid MXC4005 accelerometer that we should manage.
+ * Uses ACPI device naming ("MDA6655") to identify our specific hardware.
+ *
+ * Returns: 0 to continue iteration, non-zero to stop (currently always 0)
  */
 static int cmx_check_mxc4005_device(struct device *dev, void *data)
 {
@@ -930,10 +957,18 @@ static int cmx_check_mxc4005_device(struct device *dev, void *data)
 }
 
 /**
- * cmx_find_working_mxc4005_devices - Find functional MXC4005 devices
+ * cmx_find_working_mxc4005_devices - Find functional accelerometer devices
+ * @base_dev: Output pointer to base (keyboard) accelerometer device
+ * @lid_dev: Output pointer to lid (screen) accelerometer device
  * 
- * This function finds MXC4005 devices that are actually working (have IIO interfaces)
- * and identifies them reliably without depending on bus numbers.
+ * Searches for MXC4005 devices that are bound to the mxc4005 driver and
+ * have functional IIO interfaces. Uses device naming heuristics to identify
+ * our specific hardware without depending on fixed I2C bus numbers.
+ * 
+ * The first MDA6655 device found becomes the base, the second becomes the lid.
+ * This ordering matches the ACPI enumeration order on the Minibook X.
+ *
+ * Returns: Number of working accelerometer devices found (0-2)
  */
 static int cmx_find_working_mxc4005_devices(struct device **base_dev, struct device **lid_dev)
 {
@@ -953,10 +988,17 @@ static int cmx_find_working_mxc4005_devices(struct device **base_dev, struct dev
 }
 
 /**
- * cmx_discover_accelerometers - Discover accelerometer devices reliably
- * 
- * This function uses multiple strategies to find our accelerometer devices
- * without relying on fixed I2C bus numbers.
+ * cmx_discover_accelerometers - Multi-strategy accelerometer device discovery
+ *
+ * Uses two complementary strategies to reliably find accelerometer devices:
+ * 1. Hardware-level detection: Scans for physical devices regardless of driver state
+ * 2. Driver-level detection: Finds devices with working mxc4005 driver bindings
+ *
+ * This dual approach handles various system states (driver loaded/unloaded,
+ * devices bound/unbound) and provides comprehensive device discovery.
+ * Prefers working devices when available, falls back to hardware detection.
+ *
+ * Returns: Number of accelerometer devices discovered (0-2)
  */
 static int cmx_discover_accelerometers(void)
 {
@@ -1009,7 +1051,12 @@ static int cmx_discover_accelerometers(void)
 }
 
 /**
- * cmx_count_mxc4005_devices - Count available MXC4005 IIO devices
+ * cmx_count_mxc4005_devices - Count bound MXC4005 accelerometer devices
+ * 
+ * Iterates through all I2C devices to count those bound to the mxc4005 driver.
+ * Used to determine how many accelerometers are currently available.
+ *
+ * Returns: Number of MXC4005 devices found on the I2C bus
  */
 static int cmx_count_mxc4005_devices(void)
 {
@@ -1022,7 +1069,21 @@ static int cmx_count_mxc4005_devices(void)
 }
 
 /**
- * cmx_instantiate_mxc4005 - Instantiate MXC4005 device on I2C bus with mount matrix
+ * cmx_instantiate_mxc4005 - Create MXC4005 device with mount matrix support
+ * @bus_nr: I2C bus number where device should be instantiated
+ * @addr: I2C address for the device (typically 0x15)
+ * @is_second: Whether this is the second device being instantiated
+ * @is_lid: Whether this device is the lid (screen) accelerometer
+ *
+ * Creates an MXC4005 I2C device instance with appropriate mount matrix
+ * configuration. Handles mount matrix application, software node creation,
+ * and device registration. Skips instantiation if device already exists.
+ *
+ * Mount matrix assignment:
+ * - Lid sensor: Identity matrix (no rotation)
+ * - Base sensor: 90° CW rotation + Z-axis inversion
+ *
+ * Returns: 0 on success, negative error code on failure
  */
 static int cmx_instantiate_mxc4005(int bus_nr, int addr, bool is_second, bool is_lid)
 {
@@ -1118,7 +1179,13 @@ static int cmx_instantiate_mxc4005(int bus_nr, int addr, bool is_second, bool is
 }
 
 /**
- * cmx_check_dmi_match - Check if current hardware matches supported DMI
+ * cmx_check_dmi_match - Verify hardware compatibility via DMI table
+ *
+ * Checks if the current system matches one of the supported hardware
+ * configurations in the DMI table. Provides detailed logging about
+ * system identification for debugging unsupported hardware.
+ *
+ * Returns: true if hardware is supported, false otherwise
  */
 static bool cmx_check_dmi_match(void)
 {
@@ -1139,9 +1206,18 @@ static bool cmx_check_dmi_match(void)
 }
 
 /**
- * cmx_store_iio_device_assignment - Store IIO device assignment
- * @client: I2C client device
- * @is_lid: true if this is the lid sensor, false for base sensor
+ * cmx_store_iio_device_assignment - Map I2C client to IIO device name
+ * @client: I2C client device that was just instantiated
+ * @is_lid: true if this is the lid (screen) sensor, false for base (keyboard) 
+ *
+ * Records the mapping between physical sensor location and expected IIO device
+ * name for use by the userspace daemon (cmxd). Based on observed hardware 
+ * behavior on Minibook X:
+ * - Lid sensor (i2c-12) → iio:device0  
+ * - Base sensor (i2c-11) → iio:device1
+ *
+ * Note: IIO device numbers are assigned by kernel enumeration order and may
+ * vary between boots, but this mapping reflects typical behavior.
  */
 static void cmx_store_iio_device_assignment(struct i2c_client *client, bool is_lid)
 {
@@ -1172,7 +1248,25 @@ static void cmx_store_iio_device_assignment(struct i2c_client *client, bool is_l
 }
 
 /**
- * cmx_setup_accelerometers - Setup accelerometer hardware with mount matrices
+ * cmx_setup_accelerometers - Initialize and configure accelerometer hardware
+ *
+ * Main accelerometer setup function that:
+ * 1. Discovers accelerometer hardware locations using multiple strategies
+ * 2. Assigns devices to lid/base roles based on I2C bus numbers  
+ * 3. Applies mount matrix transformations to existing or new devices
+ * 4. Ensures exactly two accelerometers are available for tablet mode detection
+ *
+ * Device assignment strategy:
+ * - Sorts discovered devices by I2C bus number
+ * - Lower bus number = base (keyboard) sensor
+ * - Higher bus number = lid (screen) sensor  
+ * - This assignment is based on empirical observation of Minibook X hardware
+ *
+ * Mount matrix application:
+ * - Lid sensor: Identity matrix (no rotation needed)
+ * - Base sensor: 90° clockwise rotation + Z-axis inversion
+ *
+ * Returns: 0 on success, negative error code on failure
  */
 static int cmx_setup_accelerometers(void)
 {
@@ -1297,7 +1391,17 @@ static int cmx_setup_accelerometers(void)
 }
 
 /**
- * cmx_init_tablet_mode - Initialize tablet mode detection system
+ * cmx_init_tablet_mode - Initialize input device for tablet mode events
+ * @pdev: Platform device pointer for device registration
+ *
+ * Creates and registers an input device that generates SW_TABLET_MODE events
+ * for desktop environment integration. The input device is associated with
+ * the platform device for proper device hierarchy and power management.
+ *
+ * Sets up capability for SW_TABLET_MODE switch events and registers with
+ * the input subsystem for event delivery to userspace consumers.
+ *
+ * Returns: 0 on success, negative error code on failure
  */
 static int cmx_init_tablet_mode(struct platform_device *pdev)
 {
@@ -1345,7 +1449,11 @@ static int cmx_init_tablet_mode(struct platform_device *pdev)
 }
 
 /**
- * cmx_cleanup_tablet_mode - Cleanup tablet mode detection system
+ * cmx_cleanup_tablet_mode - Clean up tablet mode detection resources
+ *
+ * Removes the sysfs attribute group for tablet mode configuration.
+ * Input device cleanup is handled automatically via devm framework.
+ * Called during module removal or probe failure cleanup.
  */
 static void cmx_cleanup_tablet_mode(void)
 {
@@ -1360,7 +1468,13 @@ static void cmx_cleanup_tablet_mode(void)
 /* Hardware sysfs interface functions */
 
 /**
- * cmx_create_sysfs - Create basic hardware sysfs interface
+ * cmx_create_sysfs - Initialize basic hardware sysfs interface  
+ * @chip: CMX driver context
+ *
+ * Placeholder for hardware-specific sysfs entries. Currently provides
+ * debug logging only, but can be extended for hardware status reporting.
+ *
+ * Returns: 0 (always succeeds)
  */
 int cmx_create_sysfs(struct cmx *chip)
 {
@@ -1370,7 +1484,11 @@ int cmx_create_sysfs(struct cmx *chip)
 }
 
 /**
- * cmx_remove_sysfs - Remove hardware sysfs interface
+ * cmx_remove_sysfs - Clean up hardware sysfs interface
+ * @chip: CMX driver context  
+ *
+ * Removes any hardware-specific sysfs entries. Currently provides debug
+ * logging only as no custom sysfs entries are created.
  */
 void cmx_remove_sysfs(struct cmx *chip)
 {
@@ -1379,7 +1497,21 @@ void cmx_remove_sysfs(struct cmx *chip)
 }
 
 /**
- * cmx_probe - Platform device probe function
+ * cmx_probe - Platform device probe and initialization
+ * @pdev: Platform device being probed
+ *
+ * Main driver initialization function that:
+ * 1. Allocates and initializes driver context
+ * 2. Validates hardware compatibility via DMI
+ * 3. Sets up accelerometer hardware with mount matrices  
+ * 4. Initializes tablet mode detection and input events
+ * 5. Creates sysfs interfaces for userspace communication
+ *
+ * The probe function implements a comprehensive initialization sequence
+ * that handles hardware detection, device instantiation, and interface
+ * setup for the complete tablet mode detection system.
+ *
+ * Returns: 0 on success, negative error code on failure
  */
 int cmx_probe(struct platform_device *pdev)
 {
@@ -1439,7 +1571,16 @@ err_cleanup:
 }
 
 /**
- * cmx_remove - Platform device remove function
+ * cmx_remove - Platform device removal and cleanup
+ * @pdev: Platform device being removed
+ *
+ * Performs orderly cleanup of all driver resources:
+ * 1. Removes tablet mode detection and input device
+ * 2. Cleans up sysfs interfaces  
+ * 3. Clears global driver context
+ *
+ * Note: I2C device cleanup is handled automatically by the I2C subsystem
+ * and devm framework for instantiated devices.
  */
 void cmx_remove(struct platform_device *pdev)
 {
@@ -1472,7 +1613,19 @@ static struct platform_driver cmx_driver = {
 static struct platform_device *cmx_device;
 
 /**
- * cmx_init - Module initialization
+ * cmx_init - Module initialization and hardware detection
+ *
+ * Main module initialization function that:
+ * 1. Checks DMI table for hardware compatibility
+ * 2. Registers platform driver with the kernel
+ * 3. Creates platform device for supported hardware
+ * 4. Handles duplicate initialization attempts gracefully
+ *
+ * Uses driver_init_lock to prevent race conditions during module loading.
+ * Loads on unsupported hardware with warning for testing purposes.
+ * Platform device creation is conditional on DMI detection success.
+ *
+ * Returns: 0 on success, negative error code on failure
  */
 static int __init cmx_init(void)
 {
@@ -1536,7 +1689,18 @@ static int __init cmx_init(void)
 }
 
 /**
- * cmx_exit - Module cleanup
+ * cmx_exit - Module cleanup and resource deallocation
+ *
+ * Comprehensive module cleanup function that:
+ * 1. Removes mount matrices from existing I2C devices  
+ * 2. Unregisters manually instantiated I2C accelerometer devices
+ * 3. Cleans up allocated software nodes with proper unregistration
+ * 4. Removes platform device and unregisters platform driver
+ * 5. Uses locking to ensure thread-safe cleanup
+ *
+ * Cleanup order is carefully designed to avoid dangling references
+ * and ensure proper resource deallocation. Software nodes must be
+ * unregistered before freeing to avoid kernel warnings.
  */
 static void __exit cmx_exit(void)
 {

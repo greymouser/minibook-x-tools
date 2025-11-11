@@ -17,10 +17,6 @@
 #define CMX_DRIVER_NAME "cmx"
 
 /* Module parameters (defined in cmx.c) */
-extern int lid_bus;
-extern int lid_addr;
-extern int base_bus;
-extern int base_addr;
 extern bool enable_mount_matrix;
 
 /* ACPI device information structure */
