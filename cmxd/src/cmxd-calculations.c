@@ -98,18 +98,6 @@ double cmxd_clamp(double value, double min_val, double max_val)
     return value;
 }
 
-/* Convert radians to degrees */
-double cmxd_rad_to_deg(double radians)
-{
-    return radians * 180.0 / M_PI;
-}
-
-/* Convert degrees to radians */
-double cmxd_deg_to_rad(double degrees)
-{
-    return degrees * M_PI / 180.0;
-}
-
 /*
  * =============================================================================
  * LOGGING CONFIGURATION

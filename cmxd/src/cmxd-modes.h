@@ -37,16 +37,13 @@ extern const int CMXD_MODE_STABILITY_SAMPLES;
 extern const int CMXD_ORIENTATION_FREEZE_DURATION;
 
 void cmxd_modes_init(void);
-void cmxd_modes_reset(void);
 
 const char* cmxd_get_device_mode(double angle, const char* current_mode);
 const char* cmxd_get_stable_device_mode(double angle, int orientation);
 const char* cmxd_get_stable_device_mode_with_gravity(double angle, int orientation, 
                                                     double base_mag, double lid_mag, double total_horizontal);
 
-bool cmxd_mode_has_changed(const char* current_mode);
 const char* cmxd_get_last_mode(void);
-bool cmxd_is_tablet_mode(const char* mode);
 
 void cmxd_modes_set_verbose(bool verbose);
 void cmxd_modes_set_log_debug(void (*func)(const char *fmt, ...));

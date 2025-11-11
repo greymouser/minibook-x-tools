@@ -59,32 +59,31 @@
  * =============================================================================
  */
 
-/* Configuration */
+/* Application configuration structure */
 struct config {
-    char base_dev[64];
-    char lid_dev[64];
-    char sysfs_path[PATH_MAX];
-    unsigned int buffer_timeout_ms;
-    int verbose;
-    int daemon_mode;
-    /* Event system configuration */
-    int enable_unix_socket;
-    int enable_dbus;
-    char unix_socket_path[256];
+    char base_dev[64];              /* Base accelerometer device name */
+    char lid_dev[64];               /* Lid accelerometer device name */
+    char sysfs_path[PATH_MAX];      /* Kernel module sysfs path */
+    unsigned int buffer_timeout_ms; /* IIO buffer polling timeout */
+    int verbose;                    /* Verbose logging flag */
+    /* Event system configuration - fixed at compile time */
+    int enable_unix_socket;         /* Enable Unix domain socket events */
+    int enable_dbus;                /* Enable DBus events */
+    char unix_socket_path[256];     /* Unix socket path */
 };
 
 /* Global state */
 static volatile sig_atomic_t running = 1;
 
+/* Default configuration values */
 static struct config cfg = {
-    .base_dev = "iio:device0",
-    .lid_dev = "iio:device1", 
-    .buffer_timeout_ms = 100,
-    .daemon_mode = 0,
-    .verbose = 0,
+    .base_dev = "iio:device0",         /* Overridden by kernel module */
+    .lid_dev = "iio:device1",          /* Overridden by kernel module */
+    .buffer_timeout_ms = 100,          /* 100ms IIO buffer timeout */
+    .verbose = 0,                      /* No verbose logging by default */
     .sysfs_path = CMXD_DEFAULT_SYSFS_PATH,
-    .enable_unix_socket = 1,  /* Enable Unix domain socket by default */
-    .enable_dbus = 1,         /* Enable DBus by default */
+    .enable_unix_socket = 1,           /* Unix domain socket enabled */
+    .enable_dbus = 1,                  /* DBus events enabled */
     .unix_socket_path = CMXD_SOCKET_PATH
 };
 
@@ -376,14 +375,10 @@ static int run_main_loop(void)
                 .timestamp = lid_sample.timestamp
             };
             
-            /* ==================== NEW SAMPLE ==================== */
-            log_debug("--------------------");
-            log_debug("BASE: X=%d, Y=%d, Z=%d", base_sample.x, base_sample.y, base_sample.z);
-            log_debug("LID:  X=%d, Y=%d, Z=%d", lid_sample.x, lid_sample.y, lid_sample.z);
-            log_debug("WRITTEN: base=%d %d %d, lid=%d %d %d", 
-                     base_calc_sample.x, base_calc_sample.y, base_calc_sample.z,
-                     lid_calc_sample.x, lid_calc_sample.y, lid_calc_sample.z);
-            log_debug("---");
+            /* Log sensor data in debug mode */
+            log_debug("Sensor data - Base: (%d,%d,%d), Lid: (%d,%d,%d)", 
+                     base_sample.x, base_sample.y, base_sample.z,
+                     lid_sample.x, lid_sample.y, lid_sample.z);
 
             /* Calculate hinge angle for mode detection using 0-360° system */
             double hinge_angle = cmxd_calculate_hinge_angle_360(&base_calc_sample, &lid_calc_sample, base_scale, lid_scale);
@@ -425,9 +420,6 @@ static int run_main_loop(void)
             
             double total_horizontal = base_horizontal + lid_horizontal;
             
-            /* Calculate tilt angle for orientation display */
-            double tilt_angle = cmxd_calculate_tilt_angle(lid_sample.x, lid_sample.y, lid_sample.z);
-            
             /* Detect device mode using stable mode detection with gravity confidence */
             const char* device_mode = CMXD_PROTOCOL_MODE_LAPTOP;  /* Default fallback */
             int orientation_code = 0;
@@ -453,14 +445,13 @@ static int run_main_loop(void)
                 last_kernel_mode[sizeof(last_kernel_mode) - 1] = '\0';
                 log_debug("MODE: %s", device_mode);
             }
-            log_debug("*** angle=%.1f°, orientation_code=%d, tilt=%.1f°", hinge_angle, orientation_code, tilt_angle);
+            log_debug("Hinge angle: %.1f°, device orientation: %d", hinge_angle, orientation_code);
             
             /* Detect orientation using dual-sensor switching based on actual device mode */
             const char* orientation = cmxd_get_orientation_with_sensor_switching(
                 lid_sample.x, lid_sample.y, lid_sample.z,
                 base_sample.x, base_sample.y, base_sample.z, device_mode);
-            log_debug("ORIENT: %s", orientation);
-            log_debug("*** mode=%s, lid_tilt=%.1f°", kernel_mode, tilt_angle);
+            log_debug("Device mode: %s, Orientation: %s", kernel_mode, orientation);
             
             /* Write filtered mode to kernel module and send events */
             if (cmxd_write_mode_with_events(kernel_mode) < 0) {
@@ -561,7 +552,6 @@ static void usage(void)
     printf("Options:\n");
     printf("  -t, --timeout-ms MS      Buffer read timeout in milliseconds (default: %u)\n", cfg.buffer_timeout_ms);
     printf("  -s, --sysfs-path PATH    Kernel module sysfs path (default: %s)\n", cfg.sysfs_path);
-    printf("  -d, --daemon             Run as daemon\n");
     printf("  -v, --verbose            Verbose logging (shows all debug information)\n");
     printf("  -h, --help               Show this help\n");
     printf("  -V, --version            Show version\n");
@@ -577,7 +567,6 @@ static int parse_args(int argc, char **argv)
     static struct option long_options[] = {
         {"timeout-ms",  required_argument, 0, 't'},
         {"sysfs-path",  required_argument, 0, 's'},
-        {"daemon",      no_argument,       0, 'd'},
         {"verbose",     no_argument,       0, 'v'},
         {"help",        no_argument,       0, 'h'},
         {"version",     no_argument,       0, 'V'},
@@ -588,7 +577,7 @@ static int parse_args(int argc, char **argv)
     char *endptr;
     unsigned long val;
     
-    while ((c = getopt_long(argc, argv, "t:s:dvhV", long_options, NULL)) != -1) {
+    while ((c = getopt_long(argc, argv, "t:s:vhV", long_options, NULL)) != -1) {
         switch (c) {
             case 't':
                 errno = 0;
@@ -606,10 +595,6 @@ static int parse_args(int argc, char **argv)
                     return -1;
                 }
                 strcpy(cfg.sysfs_path, optarg);
-                break;
-                
-            case 'd':
-                cfg.daemon_mode = 1;
                 break;
                 
             case 'v':

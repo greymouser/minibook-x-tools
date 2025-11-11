@@ -43,8 +43,6 @@ double cmxd_calculate_gravity_compensated_hinge_angle(const struct cmxd_accel_sa
 /* Utility functions */
 double cmxd_calculate_tilt_angle(double x, double y, double z);
 double cmxd_clamp(double value, double min_val, double max_val);
-double cmxd_rad_to_deg(double radians);
-double cmxd_deg_to_rad(double degrees);
 
 /* Module configuration */
 void cmxd_calculations_set_log_debug(void (*func)(const char *fmt, ...));

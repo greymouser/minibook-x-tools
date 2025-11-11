@@ -52,8 +52,4 @@ int cmxd_send_events(cmxd_event_type_t type, const char *new_value, const char *
 int cmxd_write_mode_with_events(const char *mode);
 int cmxd_write_orientation_with_events(const char *orientation);
 
-/* Get current cached state */
-const char *cmxd_get_current_mode(void);
-const char *cmxd_get_current_orientation(void);
-
 #endif /* CMXD_EVENTS_H */

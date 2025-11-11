@@ -162,14 +162,3 @@ int cmxd_protocol_parse_message(const char *message,
  * PROTOCOL UTILITY FUNCTIONS
  * =============================================================================
  */
-
-bool cmxd_protocol_is_tablet_mode(const char *mode_value)
-{
-    if (!mode_value) {
-        return false;
-    }
-    
-    /* Only 'tablet' and 'tent' mode should trigger SW_TABLET_MODE=1 */
-    return strcmp(mode_value, CMXD_PROTOCOL_MODE_TABLET) == 0 ||
-           strcmp(mode_value, CMXD_PROTOCOL_MODE_TENT) == 0;
-}

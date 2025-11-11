@@ -103,12 +103,4 @@ int cmxd_protocol_format_message(char *buffer, size_t buffer_size,
 int cmxd_protocol_parse_message(const char *message, 
                                 struct cmxd_protocol_message *parsed);
 
-/**
- * Check if a mode value represents tablet mode for SW_TABLET_MODE events
- * 
- * @param mode_value Mode string from protocol message
- * @return true if mode represents tablet mode, false otherwise
- */
-bool cmxd_protocol_is_tablet_mode(const char *mode_value);
-
 #endif /* CMXD_PROTOCOL_H */

@@ -105,17 +105,6 @@ static bool is_mode_transition_allowed(const char* from_mode, const char* to_mod
     return is_laptop_tent;
 }
 
-/* Check gravity vector confidence based on sensor readings */
-static bool is_gravity_confident(double base_mag, double lid_mag, double total_horizontal)
-{
-    /* Gravity vectors should be close to 9.8 m/s² when device is stable */
-    bool base_good = (base_mag >= CMXD_GRAVITY_MIN_CONFIDENCE && base_mag <= CMXD_GRAVITY_MAX_CONFIDENCE);
-    bool lid_good = (lid_mag >= CMXD_GRAVITY_MIN_CONFIDENCE && lid_mag <= CMXD_GRAVITY_MAX_CONFIDENCE);
-    bool stable = (total_horizontal < CMXD_GRAVITY_TILT_THRESHOLD);
-    
-    return (base_good && lid_good && stable);
-}
-
 /* Mode-aware gravity confidence checking - uses different tilt tolerances per mode */
 static bool is_gravity_confident_for_mode(double base_mag, double lid_mag, double total_horizontal, const char* current_mode)
 {
@@ -188,11 +177,6 @@ void cmxd_modes_init(void)
     candidate_mode = NULL;
     stability_count = 0;
     verbose_logging = false;
-}
-
-void cmxd_modes_reset(void)
-{
-    cmxd_modes_init();
 }
 
 /* Simplified mode determination based on angle */
@@ -385,32 +369,9 @@ const char* cmxd_get_stable_device_mode_with_gravity(double angle, int orientati
     return current_mode;  /* Keep current mode until stable */
 }
 
-/* Check if mode has changed from last reading */
-bool cmxd_mode_has_changed(const char* mode)
-{
-    static const char* last_reported_mode = CMXD_PROTOCOL_MODE_LAPTOP;
-    
-    bool changed = (strcmp(mode, last_reported_mode) != 0);
-    if (changed) {
-        debug_log("Mode change: %s -> %s", last_reported_mode, mode);
-        last_reported_mode = mode;
-    }
-    
-    return changed;
-}
-
 const char* cmxd_get_last_mode(void)
 {
     return current_mode;
-}
-
-/* Check if mode represents tablet-like usage */
-bool cmxd_is_tablet_mode(const char* mode)
-{
-    if (mode == NULL) {
-        return false;
-    }
-    return (strcmp(mode, CMXD_PROTOCOL_MODE_TABLET) == 0 || strcmp(mode, CMXD_PROTOCOL_MODE_TENT) == 0);
 }
 
 void cmxd_modes_set_verbose(bool verbose)
