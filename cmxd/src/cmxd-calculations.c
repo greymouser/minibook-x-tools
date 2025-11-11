@@ -157,17 +157,46 @@ bool cmxd_detect_device_rotation(const struct cmxd_accel_sample *base, const str
     double lid_y = lid->y * lid_scale;
     double lid_z = lid->z * lid_scale;
     
-    /* Calculate tilt angles for both sensors */
-    double base_tilt = cmxd_calculate_tilt_angle(base_x, base_y, base_z);
-    double lid_tilt = cmxd_calculate_tilt_angle(lid_x, lid_y, lid_z);
+    /* Calculate magnitudes to check for unusual gravity readings */
+    double base_mag = cmxd_calculate_magnitude(base_x, base_y, base_z);
+    double lid_mag = cmxd_calculate_magnitude(lid_x, lid_y, lid_z);
     
-    /* If both sensors show significant tilt from horizontal, device is being rotated */
-    /* Typical laptop use: base ~0-30° tilt, lid ~45-90° tilt */
-    /* Device rotation: both sensors show unusual tilt angles */
-    bool base_tilted = (base_tilt > 35.0);  /* Base unusually tilted */
-    bool lid_tilted = (lid_tilt < 20.0 || lid_tilt > 85.0);  /* Lid flat or too vertical */
+    /* Calculate the relative angle between the sensors */
+    double dot_product = cmxd_calculate_dot_product(base_x, base_y, base_z, lid_x, lid_y, lid_z);
+    double cos_angle = dot_product / (base_mag * lid_mag);
+    cos_angle = cmxd_clamp(cos_angle, -1.0, 1.0);
+    double sensor_angle = acos(cos_angle) * 180.0 / M_PI;
     
-    return (base_tilted && lid_tilted);
+    /* Enhanced detection logic:
+     * 1. Check if we're in the problematic laptop angle range (90-110°) where mode changes should occur
+     * 2. Look for signs that normal hinge physics are being disrupted by device tilt
+     * 3. Be more permissive during likely transition scenarios
+     */
+    
+    /* If the sensors show they should be in laptop/flat transition zone but motion is restricted */
+    bool in_transition_zone = (sensor_angle >= 90.0 && sensor_angle <= 110.0);
+    
+    /* Check for signs of device tilt affecting readings:
+     * - Base sensor showing unexpected horizontal components 
+     * - Lid sensor showing non-standard orientation
+     * 
+     * Make thresholds much higher to avoid false compensation on normal variations
+     */
+    double base_horizontal = sqrt(base_x * base_x + base_y * base_y);
+    double lid_horizontal = sqrt(lid_x * lid_x + lid_y * lid_y);
+    
+    bool base_unusual = (base_horizontal > 6.0);  /* Base showing significant horizontal acceleration */
+    bool lid_unusual = (lid_horizontal > 8.0);    /* Lid showing major horizontal components */
+    
+    /* Apply gravity compensation if we're in transition zone and see signs of device tilt */
+    bool should_compensate = in_transition_zone && (base_unusual || lid_unusual);
+    
+    if (should_compensate) {
+        debug_log("Device rotation detected - angle=%.1f°, base_h=%.1f, lid_h=%.1f", 
+                 sensor_angle, base_horizontal, lid_horizontal);
+    }
+    
+    return should_compensate;
 }
 
 /* Gravity-compensated hinge angle calculation */
@@ -177,37 +206,59 @@ double cmxd_calculate_gravity_compensated_hinge_angle(const struct cmxd_accel_sa
 {
     /* First check if device appears to be rotated as a unit */
     if (cmxd_detect_device_rotation(base, lid, base_scale, lid_scale)) {
-        /* Device is being rotated - try to compensate by projecting vectors onto expected planes */
+        /* Device is being rotated - try to compensate by estimating true hinge angle */
         debug_log("Device rotation detected - applying gravity compensation");
         
         /* Convert to m/s² */
         double base_x = base->x * base_scale;
         double base_y = base->y * base_scale;
-        double base_z = base->z * base_scale;
         
         double lid_x = lid->x * lid_scale;
         double lid_y = lid->y * lid_scale;
-        double lid_z = lid->z * lid_scale;
         
-        /* Try to project onto expected hinge plane (Y-axis is hinge axis) */
-        /* Focus on X-Z plane components which represent the hinge opening */
-        double base_xz_mag = sqrt(base_x * base_x + base_z * base_z);
-        double lid_xz_mag = sqrt(lid_x * lid_x + lid_z * lid_z);
+        /* Calculate normal angle for reference */
+        double normal_angle = cmxd_calculate_hinge_angle(base, lid, base_scale, lid_scale);
         
-        if (base_xz_mag > 0.1 && lid_xz_mag > 0.1) {
-            /* Calculate angle in X-Z plane only */
-            double dot_xz = base_x * lid_x + base_z * lid_z;
-            double cos_angle = dot_xz / (base_xz_mag * lid_xz_mag);
-            cos_angle = cmxd_clamp(cos_angle, -1.0, 1.0);
-            
-            double compensated_angle = acos(cos_angle) * 180.0 / M_PI;
-            debug_log("Gravity compensation: raw=%.1f° -> compensated=%.1f°", 
-                     cmxd_calculate_hinge_angle(base, lid, base_scale, lid_scale), compensated_angle);
+        /* Enhanced compensation approach: 
+         * When device is tilted, the apparent angle is often smaller than real hinge angle
+         * Apply empirical correction based on horizontal acceleration magnitude
+         */
+        
+        double base_horizontal = sqrt(base_x * base_x + base_y * base_y);
+        double lid_horizontal = sqrt(lid_x * lid_x + lid_y * lid_y);
+        double total_horizontal = base_horizontal + lid_horizontal;
+        
+        /* Calculate compensation factor based on device tilt severity - be much more conservative */
+        double tilt_factor = 1.0;
+        
+        if (total_horizontal > 10.0) {
+            /* Very significant device tilt detected - apply minimal progressive compensation */
+            /* Only compensate when horizontal acceleration is very high */
+            tilt_factor = 1.0 + (total_horizontal - 10.0) * 0.05; /* 5% per m/s² of excess horizontal */
+            tilt_factor = cmxd_clamp(tilt_factor, 1.0, 1.3); /* Cap at 30% increase */
+        }
+        
+        /* Reduce transition zone boost significantly */
+        double zone_boost = 0.0;
+        if (normal_angle >= 95.0 && normal_angle <= 110.0) {
+            /* In the sticky transition zone - add minimal boost */
+            zone_boost = (normal_angle - 95.0) * 0.5; /* Up to 7.5° boost at 110° instead of 30° */
+        }
+        
+        double compensated_angle = normal_angle * tilt_factor + zone_boost;
+        compensated_angle = cmxd_clamp(compensated_angle, normal_angle, normal_angle + 50.0);
+        
+        if (compensated_angle > normal_angle + 2.0) {
+            debug_log("Applied tilt compensation: raw=%.1f° -> compensated=%.1f° (factor=%.2f, boost=%.1f°)", 
+                     normal_angle, compensated_angle, tilt_factor, zone_boost);
             return compensated_angle;
+        } else {
+            debug_log("Compensation calculated but minimal: raw=%.1f° (factor=%.2f, boost=%.1f°)", 
+                     normal_angle, tilt_factor, zone_boost);
         }
     }
     
-    /* No compensation needed - use normal calculation */
+    /* No compensation needed or beneficial - use normal calculation */
     return cmxd_calculate_hinge_angle(base, lid, base_scale, lid_scale);
 }
 

@@ -389,18 +389,70 @@ static int run_main_loop(void)
             double hinge_angle = cmxd_calculate_hinge_angle_360(&base_calc_sample, &lid_calc_sample, base_scale, lid_scale);
             log_debug("HINGE: %.1f°", hinge_angle);
             
+            /* Calculate gravity vector magnitudes and horizontal acceleration for confidence assessment */
+            double base_x_ms = base_sample.x * base_scale;
+            double base_y_ms = base_sample.y * base_scale;
+            double base_z_ms = base_sample.z * base_scale;
+            double lid_x_ms = lid_sample.x * lid_scale;
+            double lid_y_ms = lid_sample.y * lid_scale;
+            double lid_z_ms = lid_sample.z * lid_scale;
+            
+            double base_mag = sqrt(base_x_ms * base_x_ms + base_y_ms * base_y_ms + base_z_ms * base_z_ms);
+            double lid_mag = sqrt(lid_x_ms * lid_x_ms + lid_y_ms * lid_y_ms + lid_z_ms * lid_z_ms);
+            
+            /* Calculate raw hinge angle first (without compensation) for orientation-based logic */
+            struct cmxd_accel_sample base_cmxd = { .x = base_sample.x, .y = base_sample.y, .z = base_sample.z };
+            struct cmxd_accel_sample lid_cmxd = { .x = lid_sample.x, .y = lid_sample.y, .z = lid_sample.z };
+            double raw_hinge_angle = cmxd_calculate_hinge_angle(&base_cmxd, &lid_cmxd, base_scale, lid_scale);
+            
+            /* Calculate horizontal acceleration properly for laptop orientation */
+            /* Base should be flat (X,Y small), lid orientation depends on RAW hinge angle */
+            double base_horizontal = sqrt(base_x_ms * base_x_ms + base_y_ms * base_y_ms);
+            
+            /* For lid horizontal calculation, consider expected orientation based on raw hinge angle */
+            double lid_horizontal;
+            if (raw_hinge_angle >= 70 && raw_hinge_angle <= 110) {
+                /* Laptop mode: lid is roughly vertical, X-axis reading is expected gravity */
+                /* Only Y and Z components indicate unexpected motion */
+                lid_horizontal = sqrt(lid_y_ms * lid_y_ms + lid_z_ms * lid_z_ms);
+            } else if (raw_hinge_angle >= 160) {
+                /* Flat/tent/tablet modes: lid orientation varies, use different calculation */
+                lid_horizontal = sqrt(lid_x_ms * lid_x_ms + lid_y_ms * lid_y_ms);
+            } else {
+                /* Transitional angles: use full calculation */
+                lid_horizontal = sqrt(lid_x_ms * lid_x_ms + lid_y_ms * lid_y_ms);
+            }
+            
+            double total_horizontal = base_horizontal + lid_horizontal;
+            
             /* Calculate tilt angle for orientation display */
             double tilt_angle = cmxd_calculate_tilt_angle(lid_sample.x, lid_sample.y, lid_sample.z);
             
-            /* Detect device mode using stable mode detection */
+            /* Detect device mode using stable mode detection with gravity confidence */
             const char* device_mode = CMXD_PROTOCOL_MODE_LAPTOP;  /* Default fallback */
             int orientation_code = 0;
             if (hinge_angle >= 0) {
                 /* Get orientation code for mode detection */
                 orientation_code = cmxd_get_device_orientation(lid_sample.x, lid_sample.y, lid_sample.z);
-                device_mode = cmxd_get_stable_device_mode(hinge_angle, orientation_code);
+                device_mode = cmxd_get_stable_device_mode_with_gravity(hinge_angle, orientation_code, 
+                                                                     base_mag, lid_mag, total_horizontal);
             }
-            log_debug("MODE: %s", device_mode);
+            /* Filter out indeterminate mode before writing to kernel module */
+            /* The kernel only accepts: "closing", "laptop", "flat", "tent", "tablet" */
+            static char last_kernel_mode[32] = CMXD_PROTOCOL_MODE_LAPTOP;
+            const char* kernel_mode = device_mode;
+            
+            if (strcmp(device_mode, CMXD_MODE_INDETERMINATE) == 0) {
+                /* Keep the last known good mode for kernel */
+                kernel_mode = last_kernel_mode;
+                log_debug("MODE: %s (indeterminate)", kernel_mode);
+                log_debug("KERNEL: Indeterminate detected - keeping last mode '%s' for kernel", kernel_mode);
+            } else {
+                /* Update last known good mode */
+                strncpy(last_kernel_mode, device_mode, sizeof(last_kernel_mode) - 1);
+                last_kernel_mode[sizeof(last_kernel_mode) - 1] = '\0';
+                log_debug("MODE: %s", device_mode);
+            }
             log_debug("*** angle=%.1f°, orientation_code=%d, tilt=%.1f°", hinge_angle, orientation_code, tilt_angle);
             
             /* Detect orientation using dual-sensor switching based on actual device mode */
@@ -408,10 +460,10 @@ static int run_main_loop(void)
                 lid_sample.x, lid_sample.y, lid_sample.z,
                 base_sample.x, base_sample.y, base_sample.z, device_mode);
             log_debug("ORIENT: %s", orientation);
-            log_debug("*** mode=%s, lid_tilt=%.1f°", device_mode, tilt_angle);
+            log_debug("*** mode=%s, lid_tilt=%.1f°", kernel_mode, tilt_angle);
             
-            /* Write detected mode to kernel module and send events */
-            if (cmxd_write_mode_with_events(device_mode) < 0) {
+            /* Write filtered mode to kernel module and send events */
+            if (cmxd_write_mode_with_events(kernel_mode) < 0) {
                 log_warn("Failed to write mode to kernel module");
             }
             

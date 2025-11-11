@@ -15,6 +15,7 @@
 #include "cmxd-protocol.h"  /* For mode constants */
 
 #define CMXD_MODE_UNKNOWN -1
+#define CMXD_MODE_INDETERMINATE "indeterminate"
 
 /* 
  * Mode boundary angles - these match the constants defined in cmxd-modes.c
@@ -26,6 +27,10 @@ extern const double CMXD_MODE_FLAT_MAX;
 extern const double CMXD_MODE_TENT_MAX;
 extern const double CMXD_MODE_TABLET_MAX;
 
+/* Gravity vector confidence thresholds */
+extern const double CMXD_GRAVITY_MIN_CONFIDENCE;
+extern const double CMXD_GRAVITY_TILT_THRESHOLD;
+
 /* Filtering and stability constants */
 extern const double CMXD_MODE_HYSTERESIS;
 extern const int CMXD_MODE_STABILITY_SAMPLES;
@@ -36,6 +41,8 @@ void cmxd_modes_reset(void);
 
 const char* cmxd_get_device_mode(double angle, const char* current_mode);
 const char* cmxd_get_stable_device_mode(double angle, int orientation);
+const char* cmxd_get_stable_device_mode_with_gravity(double angle, int orientation, 
+                                                    double base_mag, double lid_mag, double total_horizontal);
 
 bool cmxd_mode_has_changed(const char* current_mode);
 const char* cmxd_get_last_mode(void);
