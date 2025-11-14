@@ -1,6 +1,8 @@
 # Ignore Linux kernel source directory
 linux-6.17.7-gentoo/
 
+!linux-6.17.7-gentoo/.gitignore
+
 # But track specific files we need
 !linux-6.17.7-gentoo/drivers/acpi/scan.c
 !linux-6.17.7-gentoo/drivers/platform/x86/Kconfig
