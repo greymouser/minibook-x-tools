@@ -1,6 +1,6 @@
 # Ignore Linux kernel source directories
-/linux-6.17.7-gentoo/
-/linux-6.17.7-gentoo-orig/
+linux-6.17.7-gentoo/
+linux-6.17.7-gentoo-orig/
 
 # But track specific files we need
 !linux-6.17.7-gentoo/drivers/acpi/Makefile

@@ -132,6 +132,7 @@ obj-$(CONFIG_TOUCHSCREEN_DMI)		+= touchscreen_dmi.o
 ifdef CONFIG_CHUWI_MINIBOOK_X
 CFLAGS_serial-multi-instantiate.o += -DCONFIG_CHUWI_MINIBOOK_X
 endif
+obj-$(CONFIG_CHUWI_MINIBOOK_X)		+= cmx.o
 obj-$(CONFIG_WIRELESS_HOTKEY)		+= wireless-hotkey.o
 obj-$(CONFIG_X86_ANDROID_TABLETS)	+= x86-android-tablets/
 
