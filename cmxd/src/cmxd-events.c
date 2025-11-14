@@ -13,6 +13,9 @@
 #include "cmxd-data.h"
 #include "cmxd-paths.h"
 #include "cmxd-protocol.h"
+#ifdef ENABLE_DBUS
+#include "cmxd-dbus.h"
+#endif
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -356,7 +359,7 @@ static int init_unix_socket(void)
     return 0;
 }
 
-/* Initialize DBus connection (placeholder for now) */
+/* Initialize DBus connection */
 static int init_dbus(void)
 {
     if (!events_config->enable_dbus) {
@@ -364,8 +367,24 @@ static int init_dbus(void)
         return 0;
     }
     
-    log_debug("DBus initialization deferred for future implementation");
+#ifdef ENABLE_DBUS
+    struct cmxd_dbus_config dbus_config = {
+        .enable_sensor_proxy = 1,  /* Enable iio-sensor-proxy compatibility */
+        .enable_tablet_mode = 1    /* Enable custom tablet mode interface */
+    };
+    
+    int result = cmxd_dbus_init(&dbus_config, log_function);
+    if (result < 0) {
+        log_error("Failed to initialize DBus module");
+        return -1;
+    }
+    
+    log_info("DBus module initialized successfully");
     return 0;
+#else
+    log_debug("DBus support not compiled in");
+    return 0;
+#endif
 }
 
 /* Send Unix domain socket event */
@@ -435,18 +454,36 @@ static int send_unix_socket_event(const struct cmxd_event *event)
     return (sent_count > 0 || client_count == 0) ? 0 : -1;
 }
 
-/* Send DBus event (placeholder for now) */
+/* Send DBus event */
 static int send_dbus_event(const struct cmxd_event *event)
 {
     if (!events_config->enable_dbus) {
         return 0;
     }
     
+#ifdef ENABLE_DBUS
     log_debug("DBus event: type=%d, value='%s', previous='%s'", 
               event->type, event->value, event->previous_value ? event->previous_value : "none");
     
-    /* TODO: Implement actual DBus sending */
+    int result = 0;
+    if (event->type == CMXD_EVENT_MODE_CHANGE) {
+        /* Send device mode change */
+        result = cmxd_dbus_publish_device_mode(event->value);
+    } else if (event->type == CMXD_EVENT_ORIENTATION_CHANGE) {
+        /* Send orientation change */
+        result = cmxd_dbus_publish_orientation(event->value);
+    }
+    
+    if (result < 0) {
+        log_warn("Failed to send DBus event");
+    }
+    
+    return result;
+#else
+    log_debug("DBus event: type=%d, value='%s', previous='%s' (DBus not compiled in)", 
+              event->type, event->value, event->previous_value ? event->previous_value : "none");
     return 0;
+#endif
 }
 
 /*
@@ -550,7 +587,13 @@ void cmxd_events_cleanup(void)
         log_debug("Unix domain socket cleaned up: %s", events_config->unix_socket_path);
     }
     
-    /* TODO: Cleanup DBus connections */
+    /* Cleanup DBus connections */
+#ifdef ENABLE_DBUS
+    if (events_config && events_config->enable_dbus) {
+        cmxd_dbus_cleanup();
+        log_debug("DBus module cleaned up");
+    }
+#endif
     
     events_config = NULL;
     log_function = NULL;

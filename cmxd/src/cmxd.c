@@ -40,6 +40,10 @@
 #include "cmxd-paths.h"
 #include "cmxd-protocol.h"
 
+#ifdef ENABLE_DBUS
+#include "cmxd-dbus.h"
+#endif
+
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif
@@ -291,7 +295,7 @@ static int run_main_loop(void)
         }
         
         if (poll_result == 0) {
-            /* Timeout - trigger new samples and continue */
+            /* Timeout - trigger new samples */
             trigger_iio_sampling();
             continue;
         }
@@ -553,12 +557,18 @@ static void usage(void)
     printf("  -t, --timeout-ms MS      Buffer read timeout in milliseconds (default: %u)\n", cfg.buffer_timeout_ms);
     printf("  -s, --sysfs-path PATH    Kernel module sysfs path (default: %s)\n", cfg.sysfs_path);
     printf("  -v, --verbose            Verbose logging (shows all debug information)\n");
+#ifdef ENABLE_DBUS
+    printf("      --no-dbus            Disable DBus event publishing\n");
+#endif
     printf("  -h, --help               Show this help\n");
     printf("  -V, --version            Show version\n");
     printf("\n");
     printf("Examples:\n");
     printf("  %s                       # Use defaults with auto-detected devices\n", PROGRAM_NAME);
     printf("  %s -t 50 -v             # 50ms buffer timeout, verbose\n", PROGRAM_NAME);
+#ifdef ENABLE_DBUS
+    printf("  %s --no-dbus             # Disable DBus support\n", PROGRAM_NAME);
+#endif
 }
 
 /* Parse command line arguments */
@@ -568,6 +578,9 @@ static int parse_args(int argc, char **argv)
         {"timeout-ms",  required_argument, 0, 't'},
         {"sysfs-path",  required_argument, 0, 's'},
         {"verbose",     no_argument,       0, 'v'},
+#ifdef ENABLE_DBUS
+        {"no-dbus",     no_argument,       0, 1000},
+#endif
         {"help",        no_argument,       0, 'h'},
         {"version",     no_argument,       0, 'V'},
         {0, 0, 0, 0}
@@ -600,6 +613,12 @@ static int parse_args(int argc, char **argv)
             case 'v':
                 cfg.verbose = 1;
                 break;
+                
+#ifdef ENABLE_DBUS
+            case 1000: /* --no-dbus */
+                cfg.enable_dbus = 0;
+                break;
+#endif
                 
             case 'h':
                 usage();

@@ -7,12 +7,22 @@
 PROGRAM_NAME := cmxd
 VERSION := $(shell cat VERSION 2>/dev/null || echo "3.0")
 
+# Optional features (set to 1 to enable, 0 to disable)
+ENABLE_DBUS ?= 1
+
 # Build configuration
 CC ?= gcc
 CFLAGS := -std=gnu11 -Wall -Wextra -O2 -g
 CPPFLAGS := -D_GNU_SOURCE -DVERSION=\"$(VERSION)\"
 LDFLAGS := 
 LIBS := -lm -lpthread
+
+# DBus support configuration
+ifeq ($(ENABLE_DBUS),1)
+    CPPFLAGS += -DENABLE_DBUS=1
+    LIBS += $(shell pkg-config --libs dbus-1 2>/dev/null || echo "-ldbus-1")
+    CFLAGS += $(shell pkg-config --cflags dbus-1 2>/dev/null)
+endif
 
 # Installation paths
 PREFIX ?= /usr
@@ -27,6 +37,12 @@ MANDIR := $(PREFIX)/share/man
 # Source files
 SRCDIR := src
 DAEMON_SOURCES := $(SRCDIR)/$(PROGRAM_NAME).c $(SRCDIR)/cmxd-calculations.c $(SRCDIR)/cmxd-orientation.c $(SRCDIR)/cmxd-modes.c $(SRCDIR)/cmxd-data.c $(SRCDIR)/cmxd-events.c
+
+# Add DBus module if enabled
+ifeq ($(ENABLE_DBUS),1)
+    DAEMON_SOURCES += $(SRCDIR)/cmxd-dbus.c
+endif
+
 LIB_SOURCES := $(SRCDIR)/cmxd-protocol.c
 DAEMON_OBJECTS := $(DAEMON_SOURCES:.c=.o)
 LIB_OBJECTS := $(LIB_SOURCES:.c=.o)
@@ -109,6 +125,11 @@ install: $(TARGET) $(LIBRARY)
 	# Install systemd service
 	install -d $(DESTDIR)$(SYSTEMDDIR)
 	install -m 644 $(SERVICEFILES) $(DESTDIR)$(SYSTEMDDIR)/
+	# Install DBus policy (if DBus is enabled)
+ifeq ($(ENABLE_DBUS),1)
+	install -d $(DESTDIR)$(SYSCONFDIR)/dbus-1/system.d
+	install -m 644 support/cmxd-dbus.conf $(DESTDIR)$(SYSCONFDIR)/dbus-1/system.d/
+endif
 	# Update ldconfig
 	ldconfig
 	# Create runtime directory for Unix domain sockets
@@ -121,6 +142,9 @@ uninstall:
 	rm -rf $(DESTDIR)$(INCLUDEDIR)
 	rm -f $(DESTDIR)$(SYSCONFDIR)/default/$(PROGRAM_NAME)
 	rm -f $(DESTDIR)$(SYSTEMDDIR)/$(PROGRAM_NAME).service
+ifeq ($(ENABLE_DBUS),1)
+	rm -f $(DESTDIR)$(SYSCONFDIR)/dbus-1/system.d/cmxd-dbus.conf
+endif
 	ldconfig
 
 # Test build (syntax check only)
@@ -162,6 +186,12 @@ help:
 	@echo "  install-systemd - Install with systemd service"
 	@echo "  uninstall-systemd - Remove systemd service"
 	@echo "  test          - Syntax check only"
+	@echo "  test-all      - Build all test executables"
+	@echo "  test-clean    - Remove test executables"
+	@echo "  help          - Show this help"
+	@echo ""
+	@echo "Build options:"
+	@echo "  ENABLE_DBUS=$(ENABLE_DBUS) - Enable DBus support (1=on, 0=off)"
 	@echo "  test-all      - Build all test executables"
 	@echo "  test-clean    - Remove test executables"
 	@echo "  help          - Show this help"
