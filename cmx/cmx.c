@@ -132,51 +132,6 @@ static const struct dmi_system_id cmx_dmi_table[] = {
 MODULE_DEVICE_TABLE(dmi, cmx_dmi_table);
 
 /*
- * is_valid_string - Check if string is in valid array
- * @str: String to validate
- * @valid_strings: NULL-terminated array of valid strings
- * Returns: true if valid, false otherwise
- */
-static bool is_valid_string(const char *str, const char * const *valid_strings)
-{
-	int i;
-	for (i = 0; valid_strings[i]; i++) {
-		if (strcmp(str, valid_strings[i]) == 0)
-			return true;
-	}
-	return false;
-}
-
-/*
- * parse_bool_string - Parse boolean value from string
- * @str: String to parse (modified to lowercase)
- * Returns: true/false if valid, -EINVAL if invalid
- */
-static int parse_bool_string(char *str)
-{
-	/* Convert to lowercase */
-	int i;
-	for (i = 0; str[i]; i++) {
-		if (str[i] >= 'A' && str[i] <= 'Z')
-			str[i] = str[i] + ('a' - 'A');
-	}
-	
-	/* Parse true values: 1,y,yes,t,true */
-	if (strcmp(str, "1") == 0 || strcmp(str, "y") == 0 ||
-	    strcmp(str, "yes") == 0 || strcmp(str, "t") == 0 ||
-	    strcmp(str, "true") == 0)
-		return 1;
-	
-	/* Parse false values: 0,n,no,f,false */
-	if (strcmp(str, "0") == 0 || strcmp(str, "n") == 0 ||
-	    strcmp(str, "no") == 0 || strcmp(str, "f") == 0 ||
-	    strcmp(str, "false") == 0)
-		return 0;
-	
-	return -EINVAL;
-}
-
-/*
  * notify_tablet_mode_change - Send SW_TABLET_MODE input event
  * @is_tablet: true if entering tablet mode, false if exiting
  *
@@ -275,7 +230,7 @@ static ssize_t store_mode(struct kobject *kobj, struct kobj_attribute *attr,
 	if (ret != 1)
 		return -EINVAL;
 	
-	if (!is_valid_string(mode_str, valid_modes))
+	if (sysfs_match_string(valid_modes, mode_str) < 0)
 		return -EINVAL;
 	
 	mutex_lock(&tm_lock);
@@ -309,7 +264,7 @@ static ssize_t store_orientation(struct kobject *kobj, struct kobj_attribute *at
 	if (ret != 1)
 		return -EINVAL;
 	
-	if (!is_valid_string(orientation_str, valid_orientations))
+	if (sysfs_match_string(valid_orientations, orientation_str) < 0)
 		return -EINVAL;
 	
 	mutex_lock(&tm_lock);
@@ -346,25 +301,15 @@ static ssize_t show_enable(struct kobject *kobj, struct kobj_attribute *attr, ch
 /* store_enable - Enable or disable tablet mode events */
 static ssize_t store_enable(struct kobject *kobj, struct kobj_attribute *attr, const char *buf, size_t len)
 {
-	char enable_str[8];
-	int result;
+	bool enable;
+	int ret;
 	
-	if (len >= sizeof(enable_str))
-		return -EINVAL;
+	ret = kstrtobool(buf, &enable);
+	if (ret)
+		return ret;
 	
-	strncpy(enable_str, buf, len);
-	enable_str[len] = '\0';
-	
-	/* Remove trailing newline if present */
-	if (len > 0 && enable_str[len - 1] == '\n')
-		enable_str[len - 1] = '\0';
-	
-	result = parse_bool_string(enable_str);
-	if (result < 0)
-		return result;
-	
-	enable_events = result;
-	pr_info(CMX_DRIVER_NAME ": Tablet mode events %s\n", result ? "enabled" : "disabled");
+	enable_events = enable;
+	pr_info(CMX_DRIVER_NAME ": Tablet mode events %s\n", enable ? "enabled" : "disabled");
 	
 	return len;
 }
