@@ -1,0 +1,135 @@
+diff '--color=auto' -urN linux-6.17.7-gentoo-orig/drivers/acpi/Makefile linux-6.17.7-gentoo/drivers/acpi/Makefile
+--- linux-6.17.7-gentoo-orig/drivers/acpi/Makefile	2025-11-03 10:20:08.000000000 -0500
++++ linux-6.17.7-gentoo/drivers/acpi/Makefile	2025-11-14 15:35:24.815503009 -0500
+@@ -9,6 +9,10 @@
+ CFLAGS_processor_idle.o += -DDISABLE_BRANCH_PROFILING
+ endif
+ 
++ifdef CONFIG_CHUWI_MINIBOOK_X
++CFLAGS_scan.o += -DCONFIG_CHUWI_MINIBOOK_X
++endif
++
+ #
+ # ACPI Boot-Time Table Parsing
+ #
+diff '--color=auto' -urN linux-6.17.7-gentoo-orig/drivers/acpi/scan.c linux-6.17.7-gentoo/drivers/acpi/scan.c
+--- linux-6.17.7-gentoo-orig/drivers/acpi/scan.c	2025-11-03 10:20:08.000000000 -0500
++++ linux-6.17.7-gentoo/drivers/acpi/scan.c	2025-11-14 15:35:31.233104937 -0500
+@@ -1764,6 +1764,9 @@
+ 		/* Non-conforming _HID for Cirrus Logic already released */
+ 		{"CLSA0100", },
+ 		{"CLSA0101", },
++		#ifdef CONFIG_CHUWI_MINIBOOK_X
++		{"MDA6655", },
++		#endif
+ 	/*
+ 	 * Some ACPI devs contain SerialBus resources even though they are not
+ 	 * attached to a serial bus at all.
+diff '--color=auto' -urN linux-6.17.7-gentoo-orig/drivers/platform/x86/cmx.c linux-6.17.7-gentoo/drivers/platform/x86/cmx.c
+--- linux-6.17.7-gentoo-orig/drivers/platform/x86/cmx.c	1969-12-31 19:00:00.000000000 -0500
++++ linux-6.17.7-gentoo/drivers/platform/x86/cmx.c	2025-11-14 17:43:21.422289140 -0500
+@@ -0,0 +1,31 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * CHUWI Minibook X platform driver
++ *
++ * Copyright (c) 2025
++ */
++
++#include <linux/module.h>
++#include <linux/platform_device.h>
++#include <linux/acpi.h>
++
++#define CMX_DRV_NAME "cmx"
++
++static int __init cmx_init(void)
++{
++	pr_info("CHUWI Minibook X platform driver loaded\n");
++	return 0;
++}
++
++static void __exit cmx_exit(void)
++{
++	pr_info("CHUWI Minibook X platform driver unloaded\n");
++}
++
++module_init(cmx_init);
++module_exit(cmx_exit);
++
++MODULE_AUTHOR("Armando DiCianno <armando@noonshy.com>");
++MODULE_DESCRIPTION("CHUWI Minibook X Platform Driver");
++MODULE_LICENSE("GPL");
++MODULE_ALIAS("platform:" CMX_DRV_NAME);
+diff '--color=auto' -urN linux-6.17.7-gentoo-orig/drivers/platform/x86/Kconfig linux-6.17.7-gentoo/drivers/platform/x86/Kconfig
+--- linux-6.17.7-gentoo-orig/drivers/platform/x86/Kconfig	2025-11-03 10:20:07.000000000 -0500
++++ linux-6.17.7-gentoo/drivers/platform/x86/Kconfig	2025-11-14 14:41:19.728336082 -0500
+@@ -199,6 +199,22 @@
+ 	  To compile this driver as a module, choose M here. The module will
+ 	  be called adv_swbutton.
+ 
++config CHUWI_MINIBOOK_X
++	tristate "CHUWI Minibook X platform support"
++	depends on ACPI && I2C
++	select MXC4005
++	select SERIAL_MULTI_INSTANTIATE
++	help
++	  Support for CHUWI Minibook X platform. Currently this support enables
++	  two mxc4005 accelerometers on the laptop, allowing for hinge angle
++	  calculations.
++
++	  This driver provides platform-specific support for the CHUWI Minibook X
++	  convertible laptop, including proper instantiation of accelerometer
++	  sensors for tablet mode detection and orientation sensing.
++
++	  Say M here if you have a CHUWI Minibook X convertible laptop.
++
+ config APPLE_GMUX
+ 	tristate "Apple Gmux Driver"
+ 	depends on ACPI && PCI
+diff '--color=auto' -urN linux-6.17.7-gentoo-orig/drivers/platform/x86/Makefile linux-6.17.7-gentoo/drivers/platform/x86/Makefile
+--- linux-6.17.7-gentoo-orig/drivers/platform/x86/Makefile	2025-11-03 10:20:07.000000000 -0500
++++ linux-6.17.7-gentoo/drivers/platform/x86/Makefile	2025-11-14 17:42:45.608140609 -0500
+@@ -127,6 +127,12 @@
+ # Platform drivers
+ obj-$(CONFIG_SERIAL_MULTI_INSTANTIATE)	+= serial-multi-instantiate.o
+ obj-$(CONFIG_TOUCHSCREEN_DMI)		+= touchscreen_dmi.o
++
++# CHUWI Minibook X - ensure config is available to serial-multi-instantiate
++ifdef CONFIG_CHUWI_MINIBOOK_X
++CFLAGS_serial-multi-instantiate.o += -DCONFIG_CHUWI_MINIBOOK_X
++endif
++obj-$(CONFIG_CHUWI_MINIBOOK_X)		+= cmx.o
+ obj-$(CONFIG_WIRELESS_HOTKEY)		+= wireless-hotkey.o
+ obj-$(CONFIG_X86_ANDROID_TABLETS)	+= x86-android-tablets/
+ 
+diff '--color=auto' -urN linux-6.17.7-gentoo-orig/drivers/platform/x86/serial-multi-instantiate.c linux-6.17.7-gentoo/drivers/platform/x86/serial-multi-instantiate.c
+--- linux-6.17.7-gentoo-orig/drivers/platform/x86/serial-multi-instantiate.c	2025-11-03 10:20:07.000000000 -0500
++++ linux-6.17.7-gentoo/drivers/platform/x86/serial-multi-instantiate.c	2025-11-14 15:32:05.238655943 -0500
+@@ -323,6 +323,17 @@
+ 	.bus_type = SMI_I2C,
+ };
+ 
++#ifdef CONFIG_CHUWI_MINIBOOK_X
++static const struct smi_node cmx_data = {
++	.instances = {
++		{ "mxc4005", IRQ_RESOURCE_NONE, 0 },
++		{ "mxc4005", IRQ_RESOURCE_NONE, 1 },
++		{}
++	},
++	.bus_type = SMI_I2C,
++};
++#endif
++
+ static const struct smi_node int3515_data = {
+ 	.instances = {
+ 		{ "tps6598x", IRQ_RESOURCE_APIC, 0 },
+@@ -411,6 +422,9 @@
+ 	/* Non-conforming _HID for Cirrus Logic already released */
+ 	{ "CLSA0100", (unsigned long)&cs35l41_hda },
+ 	{ "CLSA0101", (unsigned long)&cs35l41_hda },
++	#ifdef CONFIG_CHUWI_MINIBOOK_X
++	{ "MDA6655", (unsigned long)&cmx_data },
++	#endif
+ 	{ }
+ };
+ MODULE_DEVICE_TABLE(acpi, smi_acpi_ids);
