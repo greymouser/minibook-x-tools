@@ -2,22 +2,20 @@
 
 ## Project Overview
 
-This is a Linux hardware support project for the **Chuwi Minibook X** convertible laptop, implementing tablet mode detection through accelerometer data and mount matrix transformations. The system consists of a kernel module (`cmx`) and userspace daemon (`cmxd`) working together.
-
-In the future, there may also be a desktop integration component (`tablet-mode-daemon`) to translate kernel events into desktop environment actions.
+This is a Linux hardware support project for the **Chuwi Minibook X** convertible laptop, implementing tablet mode detection through accelerometer data and mount matrix transformations. The system consists of a kernel module (`cmx`) and userspace daemon (`cmxd`) working together. The kernel module is supported by a kernel patch (`cmx-kernel-patch`) turning off automatic ACPI scanning & loading for mxc4005 accelerometer devices and support for mxc4005 in serial-multi-instantiate, allowing multiple instances of the mxc4005 accelerometer devices to load. There is a desktop integration component (`tablet-mode-daemon`) to translate kernel events into desktop environment actions.
 
 ## Architecture
 
 ### Two-Component System
-- **`cmx/`** - Kernel module that handles hardware detection, I2C device instantiation, mount matrix setup, and provides sysfs interface
-  - The mount matrices may or may not be correct. They are likely correct. We should collect evidence that proves their correctness.
+- **`cmx-kernel-patch/`** - Kernel patch to disable ACPI loading of mxc4005 devices and enable serial-multi-instantiate support for multiple mxc4005 devices.
+- **`cmx/`** - Kernel module that provides sysfs interface and responds to tablet mode changes.
 - **`cmxd/`** - Userspace daemon that processes accelerometer data, calculates hinge angles, and communicates with kernel module
-- **`tablet-mode-daemon/`** - Desktop integration daemon that translates kernel events to desktop environment actions
+- **`tablet-mode-daemon/`** - Desktop integration daemon that translates kernel events to desktop environment actions. Supports a custom UNIX Domain Sockets protocol as well as DBus.
 
 ### Hardware Quirk: Sensor Orientations
 The Minibook X accelerometer sensors have specific physical orientations:
 - **Lid sensor**: No rotation needed (identity matrix)
-- **Base sensor**: 90° clockwise (CW) rotation + Z-axis inversion
+- **Base sensor**: No rotation needed (identity matrix) but with Z-axis inverted
 
 **Note**: The mount matrices have been empirically determined and corrected through analysis.
 
@@ -73,6 +71,16 @@ sudo ./cmxd -v 2>&1 | tee cmxd.log
 sudo timeout 60 ./cmxd -v > cmxd.log 2>&1
 ```
 
+### For Kernel Moduile or Daemon Development
+
+The system can be left stuck in tablet mode (which will disable the keyboard and touchpad). To reset back to laptop mode, write "laptop" to the mode sysfs entry:
+
+```bash
+echo "laptop" | sudo tee /sys/devices/platform/cmx/mode
+```
+
+Note: AI Agents should be aware of this command when suggesting code that may leave the system in tablet mode during development or testing. They should complete tests that touch the sysfs mode entry by resetting it back to laptop mode afterward.
+
 ### Critical Paths
 - **IIO devices**: `/sys/bus/iio/devices/iio:device[01]/` - accelerometer raw data
 - **Kernel sysfs**: `/sys/devices/platform/cmx/` - module configuration and data input
@@ -85,25 +93,36 @@ IIO Devices → Mount Matrix → cmxd daemon → sysfs write → cmx kernel → 
 ```
 
 1. **cmxd** reads from `/sys/bus/iio/devices/iio:device[01]/in_accel_[xyz]_raw`
-2. Applies coordinate transformations for 90° rotations
+2. Applies coordinate transformations using mount matrices
 3. Calculates hinge angle using gravity-aware 3D vector math (`cmxd-calculations.c`)
-4. Writes results to `/sys/devices/platform/cmx/accel_data` 
-5. **cmx** kernel module processes and generates `SW_TABLET_MODE` input events
+4. Writes results to files in `/sys/devices/platform/cmx/` 
+5. **cmx** kernel module generates `SW_TABLET_MODE` input events
 
 ## Code Organization
 
 ### cmxd/ - Userspace Components
-- **`cmxd.c`** - Main daemon with signal handling, configuration
-- **`cmxd-calculations.c`** - 3D vector math, hinge angle algorithms 
-- **`cmxd-data.c`** - IIO device data reading, mount matrix handling
-- **`cmxd-events.c`** - Unix socket and DBus event system
-- **`cmxd-modes.c`** - Tablet/laptop mode detection logic
-- **`cmxd-orientation.c`** - Screen orientation detection
+- **`dev/`** - Test scripts, monitoring tools, and mount matrix analysis utilities
+- **`src/cmxd.c`** - Main daemon with signal handling, configuration
+- **`src/cmxd-calculations.c`** - 3D vector math, hinge angle algorithms 
+- **`src/cmxd-data.c`** - IIO device data reading, mount matrix handling
+- **`src/cmxd-events.c`** - Unix socket and DBus event system
+- **`src/cmxd-modes.c`** - Tablet/laptop mode detection logic
+- **`src/cmxd-orientation.c`** - Screen orientation detection
+- **`src/cmxd-dbus.c`** - DBus interface implementation for desktop integration
+- **`src/cmxd-protocol.c`** - Communication protocol handling
+- **`src/cmxd-paths.h`** - System paths and file locations
+- **`support/cmxd.conf`** - Configuration file for daemon settings
+- **`support/cmxd.service`** - Systemd service file for automatic startup
+- **`support/cmxd-dbus.conf`** - DBus service configuration
 
 ### cmx/ - Kernel Module
-- **`cmx.c`** - Platform driver, sysfs interface, input device management
-- **`cmx.h`** - Shared structures and constants
+- **`dev/`** - Test scripts and hardware exploration notes
+- **`cmx.c`** - Platform driver, sysfs interface, input device management (single-file module)
 - Uses delayed work queues for event-driven processing (no polling)
+
+### Tablet Mode Daemon
+
+- TBD
 
 ## Development Workflows
 
@@ -128,10 +147,9 @@ sudo ./cmxd -v  # This will run indefinitely and will need to be terminated manu
 sudo strace -e write ./cmxd 2>&1 | grep sysfs
 ```
 
-If you are asked to check the cmxd.log, you will need to process the entire thing, not just head or tail a bit of it; there is too much data generated for a snapshot to be useful.
+If the AI Agent is asked to check a file named cmxd.log, it will need to process the entire thing, not just head or tail a bit of it; there is too much data generated for a snapshot to be useful.
 
 ### Kernel Module Development
-- Use `make dmesg` in `cmx/` to view module messages
 - Check `/proc/bus/input/devices` for input device creation
 - Use `evtest` to monitor SW_TABLET_MODE events
 
@@ -146,14 +164,14 @@ If you are asked to check the cmxd.log, you will need to process the entire thin
 - Userspace: No dynamic allocation in critical paths, stack-based structures
 
 ### Configuration
-- Module parameters in `cmx.c` for hardware detection overrides
+- Module writes `iio_lid_device` and `iio_base_device` sysfs files to allow the cmxd daemon to recognize which IIO device is the lid and base.
 - Systemd service files with security hardening (`cmxd.service`)
 - Config file support in `/etc/default/cmxd`
 
-## Legacy Components
+## EC Tools
+
+- **`tools/`** - EC utility to set bit for advanced BIOS settings
+
+## Dev stuff
 
 - **`exploration/`** - Research notes and test utilities (reference only)
-- **`tablet-mode-daemon/`** - Alternative desktop integration approach  
-- **`tools/`** - EC debugging utilities for BIOS interaction
-
-The main development focus is on `cmx/` + `cmxd/` integration.
