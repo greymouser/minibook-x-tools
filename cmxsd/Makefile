@@ -56,6 +56,7 @@ install: $(PROGRAM_NAME)
 	# Install example scripts
 	install -m 755 scripts/tablet-mode-on.sh $(DESTDIR)$(EXAMPLEDIR)/scripts/
 	install -m 755 scripts/tablet-mode-off.sh $(DESTDIR)$(EXAMPLEDIR)/scripts/
+	install -m 755 scripts/rotate-screen.sh $(DESTDIR)$(EXAMPLEDIR)/scripts/
 	
 	# Install systemd user service
 	install -m 644 $(SUPPORT_DIR)/$(PROGRAM_NAME).service $(DESTDIR)$(SYSTEMD_USER_DIR)/
@@ -82,6 +83,7 @@ install-user: $(PROGRAM_NAME)
 	install -m 644 $(SUPPORT_DIR)/cmxsd.conf ~/.config/cmxsd/daemon.conf.example
 	install -m 755 scripts/tablet-mode-on.sh ~/.config/cmxsd/tablet-mode-on.sh.example
 	install -m 755 scripts/tablet-mode-off.sh ~/.config/cmxsd/tablet-mode-off.sh.example
+	install -m 755 scripts/rotate-screen.sh ~/.config/cmxsd/rotate-screen.sh.example
 	
 	# Install user systemd service (uses system-installed binary)
 	install -m 644 $(SUPPORT_DIR)/$(PROGRAM_NAME).service ~/.local/share/systemd/user/
@@ -90,6 +92,7 @@ install-user: $(PROGRAM_NAME)
 	@echo "  cp ~/.config/cmxsd/daemon.conf.example ~/.config/cmxsd/daemon.conf"
 	@echo "  cp ~/.config/cmxsd/tablet-mode-on.sh.example ~/.config/cmxsd/tablet-mode-on.sh"
 	@echo "  cp ~/.config/cmxsd/tablet-mode-off.sh.example ~/.config/cmxsd/tablet-mode-off.sh"
+	@echo "  cp ~/.config/cmxsd/rotate-screen.sh.example ~/.config/cmxsd/rotate-screen.sh"
 	@echo "  editor ~/.config/cmxsd/daemon.conf"
 	@echo "To enable the service:"
 	@echo "  systemctl --user daemon-reload"
@@ -103,6 +106,7 @@ uninstall-user:
 	rm -f ~/.config/cmxsd/daemon.conf.example
 	rm -f ~/.config/cmxsd/tablet-mode-on.sh.example
 	rm -f ~/.config/cmxsd/tablet-mode-off.sh.example
+	rm -f ~/.config/cmxsd/rotate-screen.sh.example
 	rmdir ~/.config/cmxsd 2>/dev/null || true
 	systemctl --user daemon-reload
 

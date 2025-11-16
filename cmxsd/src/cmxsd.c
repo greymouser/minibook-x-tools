@@ -54,6 +54,7 @@ struct config {
     char config_file[PATH_MAX];
     char on_tablet_script[PATH_MAX];
     char on_laptop_script[PATH_MAX];
+    char on_rotate_script[PATH_MAX];
     char socket_path[PATH_MAX];
     int verbose;
     unsigned int debounce_ms;
@@ -66,6 +67,7 @@ static struct config cfg = {
     .config_file = "",
     .on_tablet_script = "",
     .on_laptop_script = "",
+    .on_rotate_script = "",
     .socket_path = DEFAULT_SOCKET_PATH,
     .verbose = 0,
     .debounce_ms = 500  /* 500ms debounce to avoid rapid switching */
@@ -133,6 +135,55 @@ static int execute_command(const char *command, const char *action)
     if (pid == 0) {
         /* Child process */
         execl("/bin/sh", "sh", "-c", command, NULL);
+        log_error("Failed to execute command: %s", strerror(errno));
+        exit(127);
+    } else if (pid > 0) {
+        /* Parent process */
+        if (waitpid(pid, &status, 0) == -1) {
+            log_error("Failed to wait for %s command: %s", action, strerror(errno));
+            return -1;
+        }
+        
+        if (WIFEXITED(status)) {
+            int exit_code = WEXITSTATUS(status);
+            if (exit_code != 0) {
+                log_warn("%s command exited with code %d", action, exit_code);
+                return exit_code;
+            }
+            log_debug("%s command completed successfully", action);
+            return 0;
+        } else if (WIFSIGNALED(status)) {
+            log_error("%s command terminated by signal %d", action, WTERMSIG(status));
+            return -1;
+        }
+    } else {
+        log_error("Failed to fork for %s command: %s", action, strerror(errno));
+        return -1;
+    }
+    
+    return 0;
+}
+
+/* Execute command with a parameter */
+static int execute_command_with_param(const char *command, const char *action, const char *param)
+{
+    int status;
+    pid_t pid;
+    char full_command[PATH_MAX * 2];
+    
+    if (!command || !*command) {
+        log_debug("No %s command configured", action);
+        return 0;
+    }
+    
+    /* Build full command with parameter */
+    snprintf(full_command, sizeof(full_command), "%s %s", command, param);
+    log_info("Executing %s command: %s", action, full_command);
+    
+    pid = fork();
+    if (pid == 0) {
+        /* Child process */
+        execl("/bin/sh", "sh", "-c", full_command, NULL);
         log_error("Failed to execute command: %s", strerror(errno));
         exit(127);
     } else if (pid > 0) {
@@ -468,7 +519,8 @@ static int handle_socket_event(int sock_fd)
     /* Handle orientation change events */
     if (strcmp(parsed.type, CMXD_PROTOCOL_EVENT_ORIENTATION) == 0) {
         log_info("cmxd reports orientation change: %s", parsed.value);
-        /* Future: trigger screen rotation, UI adaptations, etc. */
+        /* Execute rotation script with orientation parameter */
+        return execute_command_with_param(cfg.on_rotate_script, "rotate", parsed.value);
     }
     
     return 0;
@@ -719,6 +771,8 @@ static int load_config(const char *config_file)
                 strncpy(cfg.on_tablet_script, v, sizeof(cfg.on_tablet_script) - 1);
             } else if (strcmp(k, "on_laptop_script") == 0) {
                 strncpy(cfg.on_laptop_script, v, sizeof(cfg.on_laptop_script) - 1);
+            } else if (strcmp(k, "on_rotate_script") == 0) {
+                strncpy(cfg.on_rotate_script, v, sizeof(cfg.on_rotate_script) - 1);
             } else if (strcmp(k, "debounce_ms") == 0) {
                 cfg.debounce_ms = atoi(v);
             } else if (strcmp(k, "verbose") == 0) {
