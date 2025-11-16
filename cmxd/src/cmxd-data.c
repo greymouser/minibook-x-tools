@@ -692,3 +692,32 @@ int cmxd_read_kernel_device_assignments(char *base_dev, size_t base_size,
     
     return 0;
 }
+
+/*
+ * =============================================================================
+ * IIO TRIGGER OPERATIONS
+ * =============================================================================
+ */
+
+/* Trigger IIO sampling by writing to trigger now file */
+int cmxd_trigger_iio_sampling(void) {
+    FILE *fp;
+    char path[PATH_MAX];
+    int trigger_id;
+    
+    /* Find the first available trigger */
+    for (trigger_id = 0; trigger_id < 10; trigger_id++) {
+        snprintf(path, sizeof(path), IIO_TRIGGER_NOW_TEMPLATE, trigger_id);
+        fp = fopen(path, "w");
+        if (fp) {
+            if (fprintf(fp, "1") >= 0) {
+                fclose(fp);
+                return 0;
+            }
+            fclose(fp);
+        }
+    }
+    
+    log_error("No trigger available for sampling");
+    return -1;
+}

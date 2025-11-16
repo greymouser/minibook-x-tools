@@ -133,7 +133,7 @@ static void debug_log(const char *fmt, ...)
  */
 
 /* Detect if device is being tilted (rotated as a whole unit) vs hinge movement */
-bool cmxd_detect_device_rotation(const struct cmxd_accel_sample *base, const struct cmxd_accel_sample *lid,
+bool cmxd_detect_device_rotation(const cmxd_accel_sample *base, const cmxd_accel_sample *lid,
                                 double base_scale, double lid_scale)
 {
     /* Convert to m/s² */
@@ -189,7 +189,8 @@ bool cmxd_detect_device_rotation(const struct cmxd_accel_sample *base, const str
 
 /* Gravity-compensated hinge angle calculation */
 /* Attempts to get truer hinge angle by compensating for device tilt */
-double cmxd_calculate_gravity_compensated_hinge_angle(const struct cmxd_accel_sample *base, const struct cmxd_accel_sample *lid,
+/* Calculate gravity-compensated hinge angle with device rotation detection */
+double cmxd_calculate_gravity_compensated_hinge_angle(const cmxd_accel_sample *base, const cmxd_accel_sample *lid,
                                                      double base_scale, double lid_scale)
 {
     /* First check if device appears to be rotated as a unit */
@@ -258,7 +259,8 @@ double cmxd_calculate_gravity_compensated_hinge_angle(const struct cmxd_accel_sa
 
 /* Calculate hinge angle from base and lid accelerometer readings */
 /* Uses simple dot product method - now that mount matrices are correct! */
-double cmxd_calculate_hinge_angle(const struct cmxd_accel_sample *base, const struct cmxd_accel_sample *lid,
+/* Simple cross-product magnitude calculation for hinge angle (0-180°) */
+double cmxd_calculate_hinge_angle(const cmxd_accel_sample *base, const cmxd_accel_sample *lid,
                                  double base_scale, double lid_scale)
 {
     /* Convert raw accelerometer values to m/s² using provided scale factors */
@@ -298,7 +300,8 @@ double cmxd_calculate_hinge_angle(const struct cmxd_accel_sample *base, const st
 }
 
 /* Calculate full 0-360° hinge angle by considering laptop orientation */
-double cmxd_calculate_hinge_angle_360(const struct cmxd_accel_sample *base, const struct cmxd_accel_sample *lid,
+/* Calculate hinge angle in 0-360° range for mode detection */
+double cmxd_calculate_hinge_angle_360(const cmxd_accel_sample *base, const cmxd_accel_sample *lid,
                                      double base_scale, double lid_scale)
 {
     /* Use gravity-compensated calculation for better accuracy during transitions */
@@ -358,4 +361,25 @@ double cmxd_calculate_hinge_angle_360(const struct cmxd_accel_sample *base, cons
     }
     
     return angle_360;
+}
+
+/*
+ * =============================================================================
+ * SENSOR DATA PROCESSING HELPERS
+ * =============================================================================
+ */
+
+/* Convert raw accelerometer data to m/s² */
+void cmxd_convert_to_ms2(const cmxd_accel_sample *sample, double scale, 
+                         double *x_ms, double *y_ms, double *z_ms)
+{
+    *x_ms = sample->x * scale;
+    *y_ms = sample->y * scale; 
+    *z_ms = sample->z * scale;
+}
+
+/* Calculate horizontal magnitude from two components */
+double cmxd_calculate_horizontal_magnitude(double x_ms, double y_ms)
+{
+    return sqrt(x_ms * x_ms + y_ms * y_ms);
 }

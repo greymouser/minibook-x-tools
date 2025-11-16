@@ -24,13 +24,9 @@
 #include <time.h>
 #include <poll.h>
 #include <fcntl.h>
-#include <endian.h>
 #include <stdint.h>
 #include <stdbool.h>
 #include <sys/types.h>
-
-#define _POSIX_C_SOURCE 200809L
-#include <sys/wait.h>
 
 #include "cmxd-calculations.h"
 #include "cmxd-orientation.h"
@@ -150,8 +146,8 @@ static void log_msg(const char *level, const char *fmt, ...)
 #define log_info(fmt, ...)  log_msg("INFO", fmt, ##__VA_ARGS__)
 #define log_debug(fmt, ...) log_msg("DEBUG", fmt, ##__VA_ARGS__)
 
-/* Wrapper function for orientation module logging */
-static void orientation_log_debug(const char *fmt, ...)
+/* Simple logging callback wrapper */
+static void log_debug_callback(const char *fmt, ...)
 {
     va_list args;
     va_start(args, fmt);
@@ -200,29 +196,6 @@ static void cleanup_and_exit(void)
  * MAIN PROCESSING LOOP
  * =============================================================================
  */
-
-/* Trigger sysfs trigger to generate IIO buffer samples */
-static int trigger_iio_sampling(void) {
-    FILE *fp;
-    char path[PATH_MAX];
-    int trigger_id;
-    
-    /* Find the first available trigger */
-    for (trigger_id = 0; trigger_id < 10; trigger_id++) {
-        snprintf(path, sizeof(path), IIO_TRIGGER_NOW_TEMPLATE, trigger_id);
-        fp = fopen(path, "w");
-        if (fp) {
-            if (fprintf(fp, "1") >= 0) {
-                fclose(fp);
-                return 0;
-            }
-            fclose(fp);
-        }
-    }
-    
-    log_error("No trigger available for sampling");
-    return -1;
-}
 
 /* Main processing loop with event-driven IIO reading */
 static int run_main_loop(void)
@@ -296,7 +269,7 @@ static int run_main_loop(void)
         
         if (poll_result == 0) {
             /* Timeout - trigger new samples */
-            trigger_iio_sampling();
+            cmxd_trigger_iio_sampling();
             continue;
         }
         
@@ -364,62 +337,43 @@ static int run_main_loop(void)
         
         /* Process sensor data if we have valid readings from both sensors */
         if (base_valid && lid_valid) {
-            /* Convert to calculation structure format */
-            struct cmxd_accel_sample base_calc_sample = {
-                .x = base_sample.x,
-                .y = base_sample.y,
-                .z = base_sample.z,
-                .timestamp = base_sample.timestamp
-            };
-            
-            struct cmxd_accel_sample lid_calc_sample = {
-                .x = lid_sample.x,
-                .y = lid_sample.y,
-                .z = lid_sample.z,
-                .timestamp = lid_sample.timestamp
-            };
-            
             /* Log sensor data in debug mode */
             log_debug("Sensor data - Base: (%d,%d,%d), Lid: (%d,%d,%d)", 
                      base_sample.x, base_sample.y, base_sample.z,
                      lid_sample.x, lid_sample.y, lid_sample.z);
 
             /* Calculate hinge angle for mode detection using 0-360° system */
-            double hinge_angle = cmxd_calculate_hinge_angle_360(&base_calc_sample, &lid_calc_sample, base_scale, lid_scale);
+            double hinge_angle = cmxd_calculate_hinge_angle_360(&base_sample, &lid_sample, base_scale, lid_scale);
             log_debug("HINGE: %.1f°", hinge_angle);
             
-            /* Calculate gravity vector magnitudes and horizontal acceleration for confidence assessment */
-            double base_x_ms = base_sample.x * base_scale;
-            double base_y_ms = base_sample.y * base_scale;
-            double base_z_ms = base_sample.z * base_scale;
-            double lid_x_ms = lid_sample.x * lid_scale;
-            double lid_y_ms = lid_sample.y * lid_scale;
-            double lid_z_ms = lid_sample.z * lid_scale;
+            /* Convert to m/s² for gravity confidence assessment */
+            double base_x_ms, base_y_ms, base_z_ms;
+            double lid_x_ms, lid_y_ms, lid_z_ms;
+            cmxd_convert_to_ms2(&base_sample, base_scale, &base_x_ms, &base_y_ms, &base_z_ms);
+            cmxd_convert_to_ms2(&lid_sample, lid_scale, &lid_x_ms, &lid_y_ms, &lid_z_ms);
             
-            double base_mag = sqrt(base_x_ms * base_x_ms + base_y_ms * base_y_ms + base_z_ms * base_z_ms);
-            double lid_mag = sqrt(lid_x_ms * lid_x_ms + lid_y_ms * lid_y_ms + lid_z_ms * lid_z_ms);
+            double base_mag = cmxd_calculate_magnitude(base_x_ms, base_y_ms, base_z_ms);
+            double lid_mag = cmxd_calculate_magnitude(lid_x_ms, lid_y_ms, lid_z_ms);
             
-            /* Calculate raw hinge angle first (without compensation) for orientation-based logic */
-            struct cmxd_accel_sample base_cmxd = { .x = base_sample.x, .y = base_sample.y, .z = base_sample.z };
-            struct cmxd_accel_sample lid_cmxd = { .x = lid_sample.x, .y = lid_sample.y, .z = lid_sample.z };
-            double raw_hinge_angle = cmxd_calculate_hinge_angle(&base_cmxd, &lid_cmxd, base_scale, lid_scale);
+            /* Calculate raw hinge angle for orientation-based logic */
+            double raw_hinge_angle = cmxd_calculate_hinge_angle(&base_sample, &lid_sample, base_scale, lid_scale);
             
             /* Calculate horizontal acceleration properly for laptop orientation */
             /* Base should be flat (X,Y small), lid orientation depends on RAW hinge angle */
-            double base_horizontal = sqrt(base_x_ms * base_x_ms + base_y_ms * base_y_ms);
+            double base_horizontal = cmxd_calculate_horizontal_magnitude(base_x_ms, base_y_ms);
             
             /* For lid horizontal calculation, consider expected orientation based on raw hinge angle */
             double lid_horizontal;
             if (raw_hinge_angle >= 70 && raw_hinge_angle <= 110) {
                 /* Laptop mode: lid is roughly vertical, X-axis reading is expected gravity */
                 /* Only Y and Z components indicate unexpected motion */
-                lid_horizontal = sqrt(lid_y_ms * lid_y_ms + lid_z_ms * lid_z_ms);
+                lid_horizontal = cmxd_calculate_horizontal_magnitude(lid_y_ms, lid_z_ms);
             } else if (raw_hinge_angle >= 160) {
                 /* Flat/tent/tablet modes: lid orientation varies, use different calculation */
-                lid_horizontal = sqrt(lid_x_ms * lid_x_ms + lid_y_ms * lid_y_ms);
+                lid_horizontal = cmxd_calculate_horizontal_magnitude(lid_x_ms, lid_y_ms);
             } else {
                 /* Transitional angles: use full calculation */
-                lid_horizontal = sqrt(lid_x_ms * lid_x_ms + lid_y_ms * lid_y_ms);
+                lid_horizontal = cmxd_calculate_horizontal_magnitude(lid_x_ms, lid_y_ms);
             }
             
             double total_horizontal = base_horizontal + lid_horizontal;
@@ -785,18 +739,18 @@ int main(int argc, char **argv)
     
     /* Initialize orientation detection module */
     cmxd_orientation_init();
-    cmxd_orientation_set_log_debug(orientation_log_debug);
+    cmxd_orientation_set_log_debug(log_debug_callback);
     cmxd_orientation_set_verbose(cfg.verbose);
     log_debug("Orientation detection module initialized");
     
     /* Initialize mode detection module */
     cmxd_modes_init();
-    cmxd_modes_set_log_debug(orientation_log_debug);
+    cmxd_modes_set_log_debug(log_debug_callback);
     cmxd_modes_set_verbose(cfg.verbose);
     log_debug("Mode detection module initialized");
     
     /* Initialize calculations module */
-    cmxd_calculations_set_log_debug(orientation_log_debug);
+    cmxd_calculations_set_log_debug(log_debug_callback);
     log_debug("Calculations module initialized");
     
     /* Run main loop */

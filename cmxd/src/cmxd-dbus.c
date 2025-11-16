@@ -28,7 +28,6 @@ static bool initialized = false;
 
 /* Threading state */
 static pthread_t dbus_thread;
-static pthread_mutex_t dbus_mutex = PTHREAD_MUTEX_INITIALIZER;
 static volatile int dbus_thread_running = 0;
 static volatile int dbus_thread_should_stop = 0;
 
@@ -281,73 +280,6 @@ static DBusHandlerResult handle_method_call(DBusConnection *conn, DBusMessage *m
     }
     
     return DBUS_HANDLER_RESULT_NOT_YET_HANDLED;
-}
-
-/* Send PropertiesChanged signal */
-static int send_properties_changed_signal(const char *interface_name, const char *object_path, 
-                                        const char *property_name, DBusMessageIter *variant_iter)
-{
-    if (!connection || !interface_name || !object_path || !property_name) {
-        return -1;
-    }
-    
-    DBusMessage *signal = dbus_message_new_signal(object_path, "org.freedesktop.DBus.Properties", "PropertiesChanged");
-    if (!signal) {
-        log_error("Failed to create PropertiesChanged signal");
-        return -1;
-    }
-    
-    DBusMessageIter iter, dict_iter, entry_iter, array_iter;
-    dbus_message_iter_init_append(signal, &iter);
-    
-    /* Interface name */
-    dbus_message_iter_append_basic(&iter, DBUS_TYPE_STRING, &interface_name);
-    
-    /* Changed properties dictionary */
-    dbus_message_iter_open_container(&iter, DBUS_TYPE_ARRAY, "{sv}", &dict_iter);
-    dbus_message_iter_open_container(&dict_iter, DBUS_TYPE_DICT_ENTRY, NULL, &entry_iter);
-    dbus_message_iter_append_basic(&entry_iter, DBUS_TYPE_STRING, &property_name);
-    
-    /* Copy the variant */
-    if (variant_iter) {
-        DBusMessageIter variant_container_iter;
-        dbus_message_iter_open_container(&entry_iter, DBUS_TYPE_VARIANT, "s", &variant_container_iter);
-        
-        /* For string values, get the string from the input iterator */
-        if (dbus_message_iter_get_arg_type(variant_iter) == DBUS_TYPE_STRING) {
-            const char *str_value;
-            dbus_message_iter_get_basic(variant_iter, &str_value);
-            dbus_message_iter_append_basic(&variant_container_iter, DBUS_TYPE_STRING, &str_value);
-        }
-        /* For boolean values */
-        else if (dbus_message_iter_get_arg_type(variant_iter) == DBUS_TYPE_BOOLEAN) {
-            dbus_bool_t bool_value;
-            dbus_message_iter_get_basic(variant_iter, &bool_value);
-            dbus_message_iter_open_container(&entry_iter, DBUS_TYPE_VARIANT, "b", &variant_container_iter);
-            dbus_message_iter_append_basic(&variant_container_iter, DBUS_TYPE_BOOLEAN, &bool_value);
-        }
-        
-        dbus_message_iter_close_container(&entry_iter, &variant_container_iter);
-    }
-    
-    dbus_message_iter_close_container(&dict_iter, &entry_iter);
-    dbus_message_iter_close_container(&iter, &dict_iter);
-    
-    /* Invalidated properties (empty array) */
-    dbus_message_iter_open_container(&iter, DBUS_TYPE_ARRAY, "s", &array_iter);
-    dbus_message_iter_close_container(&iter, &array_iter);
-    
-    /* Send the signal */
-    dbus_bool_t result = dbus_connection_send(connection, signal, NULL);
-    dbus_message_unref(signal);
-    
-    if (!result) {
-        log_error("Failed to send PropertiesChanged signal");
-        return -1;
-    }
-    
-    dbus_connection_flush(connection);
-    return 0;
 }
 
 /*

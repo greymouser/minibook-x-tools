@@ -67,6 +67,7 @@ int cmxd_write_orientation(const char *orientation);
 int cmxd_find_iio_device_for_i2c(int bus, int addr, char *device_name, size_t name_size);
 
 int cmxd_ensure_iio_trigger_exists(void);
+int cmxd_trigger_iio_sampling(void);
 int cmxd_setup_iio_buffer(struct iio_buffer *buf, const char *device_name);
 int cmxd_read_iio_buffer_sample(struct iio_buffer *buf, struct accel_sample *sample);
 void cmxd_cleanup_iio_buffer(struct iio_buffer *buf);
