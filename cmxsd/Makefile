@@ -80,8 +80,8 @@ install-user: $(PROGRAM_NAME)
 	
 	# Install example config and scripts to user directory
 	install -m 644 $(SUPPORT_DIR)/cmxsd.conf ~/.config/cmxsd/daemon.conf.example
-	install -m 755 scripts/tablet-on.sh ~/.config/cmxsd/tablet-mode-on.sh.example
-	install -m 755 scripts/tablet-off.sh ~/.config/cmxsd/tablet-mode-off.sh.example
+	install -m 755 scripts/tablet-mode-on.sh ~/.config/cmxsd/tablet-mode-on.sh.example
+	install -m 755 scripts/tablet-mode-off.sh ~/.config/cmxsd/tablet-mode-off.sh.example
 	
 	# Install user systemd service (uses system-installed binary)
 	install -m 644 $(SUPPORT_DIR)/$(PROGRAM_NAME).service ~/.local/share/systemd/user/
