@@ -16,6 +16,8 @@
  * =============================================================================
  */
 
+/* Public API - used by external clients (e.g., tablet-mode-daemon) */
+__attribute__((visibility("default")))
 int cmxd_protocol_format_message(char *buffer, size_t buffer_size,
                                  const char *type, const char *value, 
                                  const char *previous)
@@ -124,6 +126,8 @@ static double find_json_timestamp(const char *json)
     return strtod(timestamp_str, NULL);
 }
 
+/* Public API - used by external clients (e.g., tablet-mode-daemon) */
+__attribute__((visibility("default")))
 int cmxd_protocol_parse_message(const char *message, 
                                 struct cmxd_protocol_message *parsed)
 {
@@ -162,3 +166,16 @@ int cmxd_protocol_parse_message(const char *message,
  * PROTOCOL UTILITY FUNCTIONS
  * =============================================================================
  */
+
+/* Public API - used by external clients (e.g., tablet-mode-daemon) */
+__attribute__((visibility("default")))
+int cmxd_protocol_is_tablet_mode(const char *mode_value)
+{
+    if (!mode_value) {
+        return 0;
+    }
+    
+    /* Only "tablet" mode is considered actual tablet mode */
+    /* tent, flat, and laptop modes keep keyboard/touchpad enabled */
+    return (strcmp(mode_value, CMXD_PROTOCOL_MODE_TABLET) == 0);
+}

@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
- * Hyprland Tablet Mode Integration Daemon
+ * CHUWI Minibook X Session Daemon (cmxsd)
  * 
- * Monitors SW_TABLET_MODE input events and triggers Hyprland tablet mode behaviors
- * including virtual keyboard, UI scaling, touch gestures, and window management.
+ * Monitors SW_TABLET_MODE input events and triggers desktop environment tablet mode 
+ * behaviors including virtual keyboard, UI scaling, touch gestures, and window management.
  *
  * Copyright (c) 2025 Armando DiCianno <armando@noonshy.com>
  */
@@ -38,8 +38,14 @@
 #define NLONGS(x) (((x) + 8 * sizeof(long) - 1) / (8 * sizeof(long)))
 #define test_bit(bit, array) ((array)[(bit) / (8 * sizeof(long))] & (1UL << ((bit) % (8 * sizeof(long)))))
 
-#define PROGRAM_NAME "tablet-mode-daemon"
-#define VERSION "1.0"
+/* VERSION and PROGRAM_NAME are provided by Makefile via -D flags */
+#ifndef VERSION
+#define VERSION "1.0.0"
+#endif
+#ifndef PROGRAM_NAME
+#define PROGRAM_NAME "cmxsd"
+#endif
+
 #define DEFAULT_SOCKET_PATH "/run/cmxd/events.sock"
 
 /* Configuration */
@@ -280,8 +286,12 @@ static int auto_detect_tablet_device(char *device_path, size_t path_size)
                 }
                 
                 /* Read the device major:minor from sysfs */
-                snprintf(dev_file_path, sizeof(dev_file_path),
-                         "%s/%s/dev", test_input_path, event_entry->d_name);
+                int ret = snprintf(dev_file_path, sizeof(dev_file_path),
+                                  "%s/%s/dev", test_input_path, event_entry->d_name);
+                if (ret < 0 || (size_t)ret >= sizeof(dev_file_path)) {
+                    log_debug("Path too long for device: %s", event_entry->d_name);
+                    continue;
+                }
                 
                 dev_file = fopen(dev_file_path, "r");
                 if (!dev_file) {
@@ -386,7 +396,15 @@ static int connect_to_cmxd_socket(void)
     
     memset(&addr, 0, sizeof(addr));
     addr.sun_family = AF_UNIX;
-    strncpy(addr.sun_path, cfg.socket_path, sizeof(addr.sun_path) - 1);
+    
+    /* Ensure socket path fits in sun_path */
+    size_t path_len = strlen(cfg.socket_path);
+    if (path_len >= sizeof(addr.sun_path)) {
+        log_error("Socket path too long: %s (max: %zu)", cfg.socket_path, sizeof(addr.sun_path) - 1);
+        close(sock_fd);
+        return -1;
+    }
+    memcpy(addr.sun_path, cfg.socket_path, path_len + 1);
     
     if (connect(sock_fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
         log_error("Failed to connect to cmxd socket %s: %s", cfg.socket_path, strerror(errno));
@@ -617,7 +635,7 @@ static int monitor_tablet_events(void)
 static int load_config_with_precedence(const char *config_file)
 {
     char user_config[PATH_MAX];
-    char system_config[] = "/etc/tablet-mode/daemon.conf";
+    char system_config[] = "/etc/cmxsd/daemon.conf";
     const char *home;
     int loaded = 0;
     
@@ -627,10 +645,10 @@ static int load_config_with_precedence(const char *config_file)
         return load_config(config_file);
     }
     
-    /* Try user config first: ~/.config/tablet-mode/daemon.conf */
+    /* Try user config first: ~/.config/cmxsd/daemon.conf */
     home = getenv("HOME");
     if (home) {
-        snprintf(user_config, sizeof(user_config), "%s/.config/tablet-mode/daemon.conf", home);
+        snprintf(user_config, sizeof(user_config), "%s/.config/cmxsd/daemon.conf", home);
         if (access(user_config, R_OK) == 0) {
             log_debug("Loading user config: %s", user_config);
             if (load_config(user_config) == 0) {
@@ -639,7 +657,7 @@ static int load_config_with_precedence(const char *config_file)
         }
     }
     
-    /* If no user config found, try system config: /etc/tablet-mode/daemon.conf */
+    /* If no user config found, try system config: /etc/cmxsd/daemon.conf */
     if (!loaded && access(system_config, R_OK) == 0) {
         log_debug("Loading system config: %s", system_config);
         if (load_config(system_config) == 0) {
@@ -755,14 +773,14 @@ static void usage(const char *program)
     printf("\nCONFIGURATION FILES:\n");
     printf("  Configuration files are checked in this order:\n");
     printf("  1. Command line specified file (-c option)\n");
-    printf("  2. User config: ~/.config/tablet-mode/daemon.conf\n");
+    printf("  2. User config: ~/.config/cmxsd/daemon.conf\n");
     printf("  3. Default example scripts (if no config found)\n");
     printf("\nEXAMPLES:\n");
     printf("  %s                                           # Use auto-detected device\n", program);
     printf("  %s -v                                        # Verbose logging\n", program);
-    printf("  %s -c ~/.config/tablet-mode/daemon.conf      # Specific config\n", program);
+    printf("  %s -c ~/.config/cmxsd/daemon.conf            # Specific config\n", program);
     printf("  %s -t 'onboard' -l 'pkill onboard'          # Virtual keyboard\n", program);
-    printf("\nSee tablet-mode-daemon(8) for more information.\n");
+    printf("\nSee cmxsd(8) for more information.\n");
 }
 
 /* Main function */

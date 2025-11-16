@@ -1,9 +1,9 @@
-# Hyprland Tablet Mode Integration Makefile
+# CHUWI Minibook X Session Daemon (cmxsd) Makefile
 # Copyright (c) 2025 Armando DiCianno <armando@noonshy.com>
 # Licensed under GPL-2.0
 
-PROGRAM_NAME = tablet-mode-daemon
-VERSION = 1.0
+PROGRAM_NAME = cmxsd
+VERSION := $(shell cat ../VERSION 2>/dev/null || echo "5.0.2")
 
 # Installation paths
 PREFIX ?= /usr
@@ -21,8 +21,12 @@ LDFLAGS ?=
 
 LIBS = -lcmx
 
+# Directory structure
+SRC_DIR = src
+SUPPORT_DIR = support
+
 # Source files
-SOURCES = $(PROGRAM_NAME).c
+SOURCES = $(SRC_DIR)/$(PROGRAM_NAME).c
 OBJECTS = $(SOURCES:.c=.o)
 
 # Default target
@@ -47,17 +51,17 @@ install: $(PROGRAM_NAME)
 	install -m 755 $(PROGRAM_NAME) $(DESTDIR)$(BINDIR)/
 	
 	# Install example configuration and scripts
-	install -m 644 tablet-mode.conf $(DESTDIR)$(EXAMPLEDIR)/daemon.conf.example
+	install -m 644 $(SUPPORT_DIR)/cmxsd.conf $(DESTDIR)$(EXAMPLEDIR)/daemon.conf.example
 	
 	# Install example scripts
 	install -m 755 scripts/tablet-mode-on.sh $(DESTDIR)$(EXAMPLEDIR)/scripts/
 	install -m 755 scripts/tablet-mode-off.sh $(DESTDIR)$(EXAMPLEDIR)/scripts/
 	
 	# Install systemd user service
-	install -m 644 $(PROGRAM_NAME).service $(DESTDIR)$(SYSTEMD_USER_DIR)/
+	install -m 644 $(SUPPORT_DIR)/$(PROGRAM_NAME).service $(DESTDIR)$(SYSTEMD_USER_DIR)/
 	
 	# Install man page
-	install -m 644 $(PROGRAM_NAME).8 $(DESTDIR)$(MANDIR)/man8/
+	install -m 644 $(SUPPORT_DIR)/$(PROGRAM_NAME).8 $(DESTDIR)$(MANDIR)/man8/
 	
 	# Install documentation
 	install -m 644 README.md $(DESTDIR)$(DOCDIR)/
@@ -69,24 +73,24 @@ uninstall:
 	rm -f $(DESTDIR)$(MANDIR)/man8/$(PROGRAM_NAME).8
 	rm -rf $(DESTDIR)$(DOCDIR)
 
-# User installation (sets up user's tablet-mode directory)
+# User installation (sets up user's cmxsd directory)
 install-user: $(PROGRAM_NAME)
-	mkdir -p ~/.config/tablet-mode
+	mkdir -p ~/.config/cmxsd
 	mkdir -p ~/.local/share/systemd/user
 	
 	# Install example config and scripts to user directory
-	install -m 644 tablet-mode.conf ~/.config/tablet-mode/daemon.conf.example
-	install -m 755 scripts/tablet-mode-on.sh ~/.config/tablet-mode/tablet-on.sh.example
-	install -m 755 scripts/tablet-mode-off.sh ~/.config/tablet-mode/tablet-off.sh.example
+	install -m 644 $(SUPPORT_DIR)/cmxsd.conf ~/.config/cmxsd/daemon.conf.example
+	install -m 755 scripts/tablet-on.sh ~/.config/cmxsd/tablet-mode-on.sh.example
+	install -m 755 scripts/tablet-off.sh ~/.config/cmxsd/tablet-mode-off.sh.example
 	
 	# Install user systemd service (uses system-installed binary)
-	install -m 644 $(PROGRAM_NAME).service ~/.local/share/systemd/user/
+	install -m 644 $(SUPPORT_DIR)/$(PROGRAM_NAME).service ~/.local/share/systemd/user/
 	
 	@echo "User setup complete. To configure:"
-	@echo "  cp ~/.config/tablet-mode/daemon.conf.example ~/.config/tablet-mode/daemon.conf"
-	@echo "  cp ~/.config/tablet-mode/tablet-on.sh.example ~/.config/tablet-mode/tablet-on.sh"
-	@echo "  cp ~/.config/tablet-mode/tablet-off.sh.example ~/.config/tablet-mode/tablet-off.sh"
-	@echo "  editor ~/.config/tablet-mode/daemon.conf"
+	@echo "  cp ~/.config/cmxsd/daemon.conf.example ~/.config/cmxsd/daemon.conf"
+	@echo "  cp ~/.config/cmxsd/tablet-mode-on.sh.example ~/.config/cmxsd/tablet-mode-on.sh"
+	@echo "  cp ~/.config/cmxsd/tablet-mode-off.sh.example ~/.config/cmxsd/tablet-mode-off.sh"
+	@echo "  editor ~/.config/cmxsd/daemon.conf"
 	@echo "To enable the service:"
 	@echo "  systemctl --user daemon-reload"
 	@echo "  systemctl --user enable --now $(PROGRAM_NAME)"
@@ -96,10 +100,10 @@ uninstall-user:
 	systemctl --user stop $(PROGRAM_NAME) || true
 	systemctl --user disable $(PROGRAM_NAME) || true
 	rm -f ~/.local/share/systemd/user/$(PROGRAM_NAME).service
-	rm -f ~/.config/tablet-mode/daemon.conf.example
-	rm -f ~/.config/tablet-mode/tablet-on.sh.example
-	rm -f ~/.config/tablet-mode/tablet-off.sh.example
-	rmdir ~/.config/tablet-mode 2>/dev/null || true
+	rm -f ~/.config/cmxsd/daemon.conf.example
+	rm -f ~/.config/cmxsd/tablet-mode-on.sh.example
+	rm -f ~/.config/cmxsd/tablet-mode-off.sh.example
+	rmdir ~/.config/cmxsd 2>/dev/null || true
 	systemctl --user daemon-reload
 
 # Quick test build and run
@@ -111,6 +115,7 @@ test: $(PROGRAM_NAME)
 # Development targets
 clean:
 	rm -f $(OBJECTS) $(PROGRAM_NAME)
+	rm -f $(SRC_DIR)/*.o
 
 debug: CFLAGS += -g -DDEBUG
 debug: $(PROGRAM_NAME)
@@ -128,7 +133,7 @@ info:
 	@echo "Program: $(PROGRAM_NAME) $(VERSION)"
 	@echo "Install prefix: $(PREFIX)"
 	@echo "Binary: $(BINDIR)/$(PROGRAM_NAME)"
-	@echo "User Config: ~/.config/tablet-mode/daemon.conf"
+	@echo "User Config: ~/.config/cmxsd/daemon.conf"
 	@echo "User Service: $(SYSTEMD_USER_DIR)/$(PROGRAM_NAME).service"
 	@echo "Man page: $(MANDIR)/man8/$(PROGRAM_NAME).8"
 	@echo "Examples: $(EXAMPLEDIR)/"
@@ -137,6 +142,6 @@ info:
 dist: clean
 	tar -czf $(PROGRAM_NAME)-$(VERSION).tar.gz \
 		--transform 's,^,$(PROGRAM_NAME)-$(VERSION)/,' \
-		*.c *.conf *.service *.8 *.md Makefile scripts/
+		$(SRC_DIR)/ $(SUPPORT_DIR)/ scripts/ *.md Makefile
 
 .PHONY: all install uninstall install-user uninstall-user test clean debug check info dist

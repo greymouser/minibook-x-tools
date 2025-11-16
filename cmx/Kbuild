@@ -8,8 +8,8 @@
 # Module definition - single unified module
 obj-m += cmx.o
 
-# Inject version from VERSION file
-VERSION_STRING := $(shell cat VERSION 2>/dev/null || echo "5.0.0")
+# Inject version from top-level VERSION file
+VERSION_STRING := $(shell cat $(src)/../VERSION 2>/dev/null || echo "5.0.2")
 ccflags-y += -DMODULE_VERSION_STRING=\"$(VERSION_STRING)\"
 
 # Development compiler flags

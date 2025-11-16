@@ -1,10 +1,10 @@
-# Hyprland Tablet Mode Integration
+# CHUWI Minibook X Session Daemon (cmxsd)
 
-This directory contains a complete tablet mode integration solution for Hyprland that bridges SW_TABLET_MODE kernel events to desktop environment changes.
+This directory contains a complete tablet mode integration solution for desktop environments that bridges SW_TABLET_MODE kernel events to user session actions.
 
 ## Overview
 
-The **tablet-mode-daemon** monitors hardware tablet mode events from your Chuwi Minibook X (or other 2-in-1 device) and automatically executes configurable scripts for optimal tablet or laptop usage.
+The **cmxsd** (CHUWI Minibook X Session Daemon) monitors hardware tablet mode events from your Chuwi Minibook X (or other 2-in-1 device) and automatically executes configurable scripts for optimal tablet or laptop usage.
 
 ### Features
 
@@ -57,23 +57,22 @@ cp ~/.config/tablet-mode/tablet-on.sh.example ~/.config/tablet-mode/tablet-on.sh
 cp ~/.config/tablet-mode/tablet-off.sh.example ~/.config/tablet-mode/tablet-off.sh
 
 # Optionally customize the daemon configuration
-cp ~/.config/tablet-mode/daemon.conf.example ~/.config/tablet-mode/daemon.conf
+cp ~/.config/cmxsd/daemon.conf.example ~/.config/cmxsd/daemon.conf
 ```
 
 ### 4. Enable the Service
 
 ```bash
 systemctl --user daemon-reload
-systemctl --user enable --now tablet-mode-daemon
+systemctl --user enable --now cmxsd
 ```
 
 ## Configuration
 
 The daemon loads configuration in this order of precedence:
 
-The daemon loads configuration in this order of precedence:
 1. **Command-line specified** (`-c /path/to/config`)
-2. **User config**: `~/.config/tablet-mode/daemon.conf`  
+2. **User config**: `~/.config/cmxsd/daemon.conf`  
 3. **Default scripts**: Built-in example scripts if no config found
 
 ### Configuration File
@@ -82,21 +81,21 @@ Copy and customize the daemon configuration:
 
 ```bash
 # Copy example to active config
-cp ~/.config/tablet-mode/daemon.conf.example ~/.config/tablet-mode/daemon.conf
-editor ~/.config/tablet-mode/daemon.conf
+cp ~/.config/cmxsd/daemon.conf.example ~/.config/cmxsd/daemon.conf
+editor ~/.config/cmxsd/daemon.conf
 ```
 
 ### Script Customization
 
-The default scripts provide optimized Hyprland integration. You can customize them for your needs:
+The default scripts provide optimized desktop environment integration. You can customize them for your needs:
 
 ```bash
 # View the default tablet mode script
-cat ~/.config/tablet-mode/tablet-on.sh.example
+cat ~/.config/cmxsd/tablet-on.sh.example
 
 # Customize for your setup
-cp ~/.config/tablet-mode/tablet-on.sh.example ~/.config/tablet-mode/tablet-on.sh
-editor ~/.config/tablet-mode/tablet-on.sh
+cp ~/.config/cmxsd/tablet-on.sh.example ~/.config/cmxsd/tablet-on.sh
+editor ~/.config/cmxsd/tablet-on.sh
 ```
 
 ## Virtual Keyboard Setup
@@ -126,7 +125,7 @@ make test
 
 # Check if SW_TABLET_MODE events are working
 # Check service logs
-journalctl --user -u tablet-mode-daemon -f
+journalctl --user -u cmxsd -f
 ```
 
 ## Configuration Files
@@ -135,14 +134,14 @@ journalctl --user -u tablet-mode-daemon -f
 
 The main configuration file controls daemon behavior:
 
-**`~/.config/tablet-mode/daemon.conf`**:
+**`~/.config/cmxsd/daemon.conf`**:
 ```ini
 # Input device (auto-detected by default)
 tablet_device=/dev/input/event20
 
 # Scripts to execute on mode changes
-on_tablet_script=~/.config/tablet-mode/tablet-on.sh
-on_laptop_script=~/.config/tablet-mode/tablet-off.sh
+on_tablet_script=~/.config/cmxsd/tablet-on.sh
+on_laptop_script=~/.config/cmxsd/tablet-off.sh
 
 # Prevent rapid switching (milliseconds)
 debounce_ms=500
@@ -162,11 +161,11 @@ Copy and customize these scripts for your needs:
 
 ```bash
 # View the default tablet script
-cat ~/.config/tablet-mode/tablet-on.sh.example
+cat ~/.config/cmxsd/tablet-on.sh.example
 
 # Customize tablet mode behavior
-cp ~/.config/tablet-mode/tablet-on.sh.example ~/.config/tablet-mode/tablet-on.sh
-editor ~/.config/tablet-mode/tablet-on.sh
+cp ~/.config/cmxsd/tablet-on.sh.example ~/.config/cmxsd/tablet-on.sh
+editor ~/.config/cmxsd/tablet-on.sh
 ```
 
 ## Built-in Hyprland Optimizations
@@ -220,10 +219,10 @@ sudo usermod -a -G input $USER
 **Daemon Not Starting**
 ```bash
 # Check service status
-systemctl --user status tablet-mode-daemon
+systemctl --user status cmxsd
 
 # View logs
-journalctl --user -u tablet-mode-daemon
+journalctl --user -u cmxsd
 ```
 
 **Hyprctl Commands Failing**
@@ -251,10 +250,10 @@ Run the daemon in foreground with verbose logging:
 
 ```bash
 # Stop the service first
-systemctl --user stop tablet-mode-daemon
+systemctl --user stop cmxsd
 
 # Run manually with debugging
-tablet-mode-daemon -f -v
+cmxsd -f -v
 
 # In another terminal, test mode switching
 echo tablet | sudo tee /sys/devices/platform/cmx/mode
@@ -353,5 +352,5 @@ GPL-2.0 - See project root for license details.
 ## Support
 
 - **GitHub Issues**: https://github.com/greymouser/minibook-x-tools
-- **Documentation**: `man tablet-mode-daemon`
-- **Examples**: `/usr/local/share/doc/tablet-mode-daemon/examples/`
+- **Documentation**: `man cmxsd`
+- **Examples**: `/usr/local/share/doc/cmxsd/examples/`

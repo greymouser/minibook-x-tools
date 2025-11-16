@@ -1,11 +1,11 @@
 [Unit]
-Description=Hyprland Tablet Mode Integration Daemon (System-wide)
-Documentation=man:tablet-mode-daemon(8)
+Description=CHUWI Minibook X Session Daemon (System-wide)
+Documentation=man:cmxsd(8)
 After=multi-user.target
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/tablet-mode-daemon -c /etc/tablet-mode/daemon.conf
+ExecStart=/usr/bin/cmxsd -c /etc/cmxsd/daemon.conf
 Restart=on-failure
 RestartSec=5
 User=root

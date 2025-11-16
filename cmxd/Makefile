@@ -5,7 +5,7 @@
 
 # Program information
 PROGRAM_NAME := cmxd
-VERSION := $(shell cat VERSION 2>/dev/null || echo "3.0")
+VERSION := $(shell cat ../VERSION 2>/dev/null || echo "5.0.2")
 
 # Optional features (set to 1 to enable, 0 to disable)
 ENABLE_DBUS ?= 1

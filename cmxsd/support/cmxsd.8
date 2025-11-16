@@ -1,16 +1,16 @@
-.\" Man page for tablet-mode-daemon
+.\" Man page for cmxsd (CHUWI Minibook X Session Daemon)
 .\" Copyright (c) 2025 Armando DiCianno <armando@noonshy.com>
 .\" Licensed under GPL-2.0
 .\"
-.TH TABLET-MODE-DAEMON 8 "October 2025" "1.0" "System Administration"
+.TH CMXSD 8 "November 2025" "1.0" "System Administration"
 .SH NAME
-tablet-mode-daemon \- Hyprland tablet mode integration daemon
+cmxsd \- CHUWI Minibook X Session Daemon
 .SH SYNOPSIS
-.B tablet-mode-daemon
+.B cmxsd
 .RI [ OPTIONS ]
 .SH DESCRIPTION
-.B tablet-mode-daemon
-is a userspace daemon that monitors SW_TABLET_MODE input events from the Linux kernel and triggers Hyprland window manager adjustments for tablet mode usage. The daemon provides seamless transitions between laptop and tablet modes by executing configurable scripts and built-in Hyprland optimizations.
+.B cmxsd
+is a userspace daemon that monitors SW_TABLET_MODE input events from the Linux kernel and triggers desktop environment adjustments for tablet mode usage. The daemon provides seamless transitions between laptop and tablet modes by executing configurable scripts and desktop environment optimizations.
 
 When tablet mode is detected, the daemon can:
 .IP \(bu 4
@@ -95,8 +95,8 @@ Enable verbose logging (0=disabled, 1=enabled)
 
 .SS Example Configuration
 .nf
-# ~/.config/tablet-mode/daemon.conf (user config)
-# /etc/tablet-mode/daemon.conf (system config)
+# ~/.config/cmxsd/daemon.conf (user config)
+# /etc/cmxsd/daemon.conf (system config)
 tablet_device=/dev/input/event21
 on_tablet_script=onboard &
 on_laptop_script=pkill onboard
@@ -156,13 +156,13 @@ Install and enable the user service:
 .nf
 .B make install-user
 .B systemctl --user daemon-reload
-.B systemctl --user enable --now tablet-mode-daemon
+.B systemctl --user enable --now cmxsd
 .fi
 
 Check service status:
 .nf
-.B systemctl --user status tablet-mode-daemon
-.B journalctl --user -u tablet-mode-daemon -f
+.B systemctl --user status cmxsd
+.B journalctl --user -u cmxsd -f
 .fi
 
 .SH HYPRLAND INTEGRATION
@@ -218,18 +218,18 @@ Check Hyprland environment variables:
 
 .SH FILES
 .TP
-.I ~/.config/tablet-mode/daemon.conf
+.I ~/.config/cmxsd/daemon.conf
 User configuration file
 .TP
-.I /etc/tablet-mode/daemon.conf
+.I /etc/cmxsd/daemon.conf
 System-wide configuration file
 
 .TP
-.I ~/.local/bin/tablet-mode-daemon
+.I ~/.local/bin/cmxsd
 User-installed daemon binary
 
 .TP
-.I ~/.local/share/systemd/user/tablet-mode-daemon.service
+.I ~/.local/share/systemd/user/cmxsd.service
 User systemd service file
 
 .TP
@@ -240,13 +240,13 @@ Input device files for tablet mode events
 .SS Basic Usage
 Run daemon in foreground with verbose output:
 .nf
-.B tablet-mode-daemon -f -v
+.B cmxsd -f -v
 .fi
 
 .SS Custom Configuration
 Use specific device and scripts:
 .nf
-.B tablet-mode-daemon \\
+.B cmxsd \\
     -d /dev/input/event22 \\
     -t 'onboard &' \\
     -l 'pkill onboard'
@@ -255,7 +255,7 @@ Use specific device and scripts:
 .SS Systemd Service
 Enable automatic startup:
 .nf
-.B systemctl --user enable --now tablet-mode-daemon
+.B systemctl --user enable --now cmxsd
 .fi
 
 .SH SEE ALSO
