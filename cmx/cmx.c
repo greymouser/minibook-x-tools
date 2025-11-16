@@ -37,15 +37,15 @@ static const char * const valid_orientations[] = {
 	"portrait", "landscape", "portrait-flipped", "landscape-flipped", NULL
 };
 
-/* IIO device paths for accelerometers */
-#define LID_IIO_DEVICE_PATH  "/sys/bus/iio/devices/iio:device0"
-#define BASE_IIO_DEVICE_PATH "/sys/bus/iio/devices/iio:device1"
+/* IIO device names for accelerometers */
+#define LID_IIO_DEVICE_NAME  "iio:device0"
+#define BASE_IIO_DEVICE_NAME "iio:device1"
 
 /**
  * struct cmx - Driver context structure
  * @pdev: Platform device
- * @base_iio_device: Base IIO device path for userspace daemon
- * @lid_iio_device: Lid IIO device path for userspace daemon
+ * @base_iio_device: Base IIO device name for userspace daemon
+ * @lid_iio_device: Lid IIO device name for userspace daemon
  * @lock: Synchronization mutex
  */
 struct cmx {
@@ -341,7 +341,7 @@ static struct attribute_group tablet_mode_attr_group = {
 /*
  * cmx_discover_iio_devices - Find existing IIO accelerometer devices
  *
- * Stores paths to IIO devices created by serial_multi_instantiate for
+ * Stores device names for IIO devices created by serial_multi_instantiate for
  * use by userspace daemon. Device assignment based on creation order:
  * - iio:device0 = lid sensor (first device created)
  * - iio:device1 = base sensor (second device created)
@@ -357,9 +357,9 @@ static int cmx_discover_iio_devices(void)
 		return -EINVAL;
 	}
 	
-	/* Devices are created by serial_multi_instantiate in order */
-	strcpy(chip->lid_iio_device, LID_IIO_DEVICE_PATH);
-	strcpy(chip->base_iio_device, BASE_IIO_DEVICE_PATH);
+	/* Store device names for userspace daemon */
+	strcpy(chip->lid_iio_device, LID_IIO_DEVICE_NAME);
+	strcpy(chip->base_iio_device, BASE_IIO_DEVICE_NAME);
 	
 	pr_info(CMX_DRIVER_NAME ": IIO device assignments: lid=%s, base=%s\n",
 		chip->lid_iio_device, chip->base_iio_device);
