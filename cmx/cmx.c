@@ -126,6 +126,14 @@ static const struct dmi_system_id cmx_dmi_table[] = {
 		},
 		.driver_data = NULL,
 	},
+	{
+		.ident = "CHUWI FreeBook",
+		.matches = {
+			DMI_MATCH(DMI_SYS_VENDOR, "CHUWI Innovation And Technology(ShenZhen)co.,Ltd"),
+			DMI_MATCH(DMI_PRODUCT_NAME, "FreeBook"),
+		},
+		.driver_data = NULL,
+	},
 	{ }
 };
 MODULE_DEVICE_TABLE(dmi, cmx_dmi_table);
